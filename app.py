@@ -6,6 +6,11 @@ import base64
 from datetime import datetime
 from urllib.parse import quote
 
+token = str(st.secrets["github_token"]).strip()
+owner = str(st.secrets["github_owner"]).strip()
+repo = str(st.secrets["github_repo"]).strip()
+branch = str(st.secrets["github_branch"]).strip()
+password = str(st.secrets["upload_password"]).strip()
 
 def init_session_state():
     if 'words' not in st.session_state:
