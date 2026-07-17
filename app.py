@@ -5,6 +5,7 @@ import requests
 import base64
 from datetime import datetime
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 
 def init_session_state():
@@ -291,23 +292,32 @@ def github_get_contents(path):
     return response
 
 
-def get_github_folders(base_path="word_list"):
-    try:
-        response = github_get_contents(base_path)
+def get_github_all_folders_recursive(base_path="word_list"):
+    collected = []
+
+    def walk_folder(path):
+        response = github_get_contents(path)
 
         if response.status_code != 200:
-            return [], f"GitHub 폴더 목록을 불러오지 못했습니다. 상태 코드: {response.status_code}"
+            raise Exception(f"{path} 조회 실패 (상태 코드: {response.status_code})")
 
         data = response.json()
-        folders = []
 
         for item in data:
             if item.get("type") == "dir":
-                folders.append(item.get("path"))
+                folder_path = item.get("path")
+                collected.append(folder_path)
+                walk_folder(folder_path)
 
-        folders.sort()
+    walk_folder(base_path)
+    collected.sort()
+    return collected
+
+
+def get_github_folders(base_path="word_list"):
+    try:
+        folders = get_github_all_folders_recursive(base_path)
         return folders, None
-
     except Exception as e:
         return [], f"GitHub 폴더 목록 조회 중 오류가 발생했습니다: {e}"
 
@@ -377,7 +387,8 @@ def make_manual_filename_from_title(full_title):
 
 
 def get_default_manual_title_prefix():
-    return datetime.now().strftime("%Y.%m.%d_%H.%M_")
+    korea_now = datetime.now(ZoneInfo("Asia/Seoul"))
+    return korea_now.strftime("%Y.%m.%d_%H.%M_")
 
 
 def upload_text_to_github(folder_path, file_name, text_content):
@@ -755,7 +766,7 @@ def render_wordbook_part():
                         elif len(parsed_words) == 0:
                             st.warning("저장할 정상 단어가 없습니다.")
                         elif errors:
-                            st.warning("형식 오류를 먼저 수정한 뒤 저장해 주세요.")
+                            st.warning("형식 오류를 먼저 수정한 ��� 저장해 주세요.")
                         elif upload_password_input != str(st.secrets["upload_password"]).strip():
                             st.error("업로드 비밀번호가 올바르지 않습니다.")
                         else:
@@ -780,7 +791,7 @@ def render_wordbook_part():
             manual_title = st.text_input(
                 "저장할 제목을 입력하세요",
                 value=default_title_prefix,
-                placeholder="예: 2026.07.17_14.43_일본어 오답"
+                placeholder="예: 2026.07.17_14.49_일본어 오답"
             )
             manual_text = st.text_area(
                 "단어장을 입력하세요",
