@@ -132,8 +132,8 @@ def parse_words_with_validation(text):
 
         else:
             word = line
-
             next_index = i + 1
+
             while next_index < len(lines) and not lines[next_index].strip():
                 next_index += 1
 
@@ -277,9 +277,13 @@ def get_repo_info():
     return owner, repo, branch
 
 
+def encode_github_path(path):
+    return quote(path, safe='/')
+
+
 def github_get_contents(path):
     owner, repo, branch = get_repo_info()
-    encoded_path = quote(path)
+    encoded_path = encode_github_path(path)
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}?ref={branch}"
     response = requests.get(url, headers=get_github_headers(), timeout=30)
     return response
@@ -327,6 +331,24 @@ def get_github_txt_files(folder_path):
         return [], f"파일 목록 조회 중 오류가 발생했습니다: {e}"
 
 
+def get_local_wordbook_structure(base_folder='word_list'):
+    folder_map = {}
+
+    if not os.path.exists(base_folder):
+        os.makedirs(base_folder)
+
+    for root, dirs, files in os.walk(base_folder):
+        txt_files = sorted([f for f in files if f.lower().endswith('.txt')])
+
+        if txt_files:
+            rel_folder = os.path.relpath(root, base_folder)
+            if rel_folder == ".":
+                rel_folder = "(루트)"
+            folder_map[rel_folder] = txt_files
+
+    return folder_map
+
+
 def make_safe_filename_part(name):
     invalid_chars = ['\\', '/', ':', '*', '?', '"', '<', '>', '|']
     safe_name = name.strip()
@@ -352,8 +374,7 @@ def make_timestamped_filename(user_title):
 def upload_text_to_github(folder_path, file_name, text_content):
     owner, repo, branch = get_repo_info()
     repo_path = f"{folder_path}/{file_name}"
-    encoded_path = quote(repo_path)
-
+    encoded_path = encode_github_path(repo_path)
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}"
 
     content_b64 = base64.b64encode(text_content.encode("utf-8")).decode("utf-8")
@@ -371,39 +392,43 @@ def upload_text_to_github(folder_path, file_name, text_content):
 def render_study_part(target_folder):
     st.header("학습 파트")
 
-    txt_files = [f for f in os.listdir(target_folder) if f.endswith('.txt')]
+    folder_map = get_local_wordbook_structure(target_folder)
 
-    if len(txt_files) == 0:
-        st.warning(f"'{target_folder}' 폴더에 txt 파일이 없습니다. 깃허브의 {target_folder} 폴더에 txt 파일을 먼저 올려주세요.")
-    else:
-        selected_file = st.selectbox("학습할 텍스트 파일을 선택하세요", txt_files, key="study_file_select")
+    if not folder_map:
+        st.warning(f"'{target_folder}' 폴더 및 하위 폴더에 txt 파일이 없습니다. 깃허브의 {target_folder} 폴더 안에 txt 파일을 먼저 올려주세요.")
+        return
 
-        col1, col2, col3 = st.columns(3)
+    selected_folder = st.selectbox("학습할 폴더를 선택하세요", list(folder_map.keys()), key="study_folder_select")
+    selected_file = st.selectbox("학습할 텍스트 파일을 선택하세요", folder_map[selected_folder], key="study_file_select")
 
-        with col1:
-            if st.button("파일 선택하기", use_container_width=True):
-                file_path = os.path.join(target_folder, selected_file)
-                st.session_state.words = load_words_from_file(file_path)
+    actual_folder = target_folder if selected_folder == "(루트)" else os.path.join(target_folder, selected_folder)
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("파일 선택하기", use_container_width=True):
+            file_path = os.path.join(actual_folder, selected_file)
+            st.session_state.words = load_words_from_file(file_path)
+            st.session_state.study_index = 0
+            st.session_state.is_studying = False
+            st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
+
+    with col2:
+        if st.button("랜덤으로 섞기", use_container_width=True):
+            if len(st.session_state.words) > 0:
+                random.shuffle(st.session_state.words)
                 st.session_state.study_index = 0
-                st.session_state.is_studying = False
-                st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
+                st.success("단어 목록이 랜덤으로 섞였습니다!")
+            else:
+                st.warning("먼저 파일을 선택해 주세요.")
 
-        with col2:
-            if st.button("랜덤으로 섞기", use_container_width=True):
-                if len(st.session_state.words) > 0:
-                    random.shuffle(st.session_state.words)
-                    st.session_state.study_index = 0
-                    st.success("단어 목록이 랜덤으로 섞였습니다!")
-                else:
-                    st.warning("먼저 파일을 선택해 주세요.")
-
-        with col3:
-            if st.button("학습하기", use_container_width=True):
-                if len(st.session_state.words) > 0:
-                    st.session_state.is_studying = True
-                    st.session_state.study_index = 0
-                else:
-                    st.warning("먼저 파일을 선택해 주세요.")
+    with col3:
+        if st.button("학습하기", use_container_width=True):
+            if len(st.session_state.words) > 0:
+                st.session_state.is_studying = True
+                st.session_state.study_index = 0
+            else:
+                st.warning("먼저 파일을 선택해 주세요.")
 
     if len(st.session_state.words) > 0 and st.session_state.is_studying:
         st.write("---")
@@ -423,49 +448,53 @@ def render_study_part(target_folder):
 def render_practice_part(target_folder):
     st.header("연습 파트")
 
-    txt_files = [f for f in os.listdir(target_folder) if f.endswith('.txt')]
+    folder_map = get_local_wordbook_structure(target_folder)
 
-    if len(txt_files) == 0:
-        st.warning(f"'{target_folder}' 폴더에 txt 파일이 없습니다. 깃허브의 {target_folder} 폴더에 txt 파일을 먼저 올려주세요.")
-    else:
-        selected_file_practice = st.selectbox("파일을 선택하세요.", txt_files, key="practice_file_select")
+    if not folder_map:
+        st.warning(f"'{target_folder}' 폴더 및 하위 폴더에 txt 파일이 없습니다. 깃허브의 {target_folder} 폴더 안에 txt 파일을 먼저 올려주세요.")
+        return
 
-        col1, col2, col3 = st.columns(3)
+    selected_folder = st.selectbox("연습할 폴더를 선택하세요", list(folder_map.keys()), key="practice_folder_select")
+    selected_file = st.selectbox("파일을 선택하세요.", folder_map[selected_folder], key="practice_file_select")
 
-        with col1:
-            if st.button("파일 선택하기", key="practice_load", use_container_width=True):
-                file_path = os.path.join(target_folder, selected_file_practice)
-                st.session_state.words = load_words_from_file(file_path)
-                st.session_state.practice_queue = list(st.session_state.words)
+    actual_folder = target_folder if selected_folder == "(루트)" else os.path.join(target_folder, selected_folder)
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("파일 선택하기", key="practice_load", use_container_width=True):
+            file_path = os.path.join(actual_folder, selected_file)
+            st.session_state.words = load_words_from_file(file_path)
+            st.session_state.practice_queue = list(st.session_state.words)
+            st.session_state.is_practicing = False
+            st.session_state.current_practice_word = None
+            st.session_state.show_answer = False
+            st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
+
+    with col2:
+        if st.button("단어 랜덤으로 섞기", use_container_width=True):
+            if len(st.session_state.practice_queue) > 0:
+                random.shuffle(st.session_state.practice_queue)
                 st.session_state.is_practicing = False
                 st.session_state.current_practice_word = None
                 st.session_state.show_answer = False
-                st.success(f"'{selected_file_practice}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
+                st.success("연습 단어가 랜덤으로 섞였습니다!")
+            else:
+                st.warning("먼저 파일을 선택해 주세요.")
 
-        with col2:
-            if st.button("단어 랜덤으로 섞기", use_container_width=True):
+    with col3:
+        if st.button("연습하기", use_container_width=True):
+            if len(st.session_state.words) > 0:
+                st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
+                st.session_state.is_practicing = True
+                st.session_state.show_answer = False
                 if len(st.session_state.practice_queue) > 0:
-                    random.shuffle(st.session_state.practice_queue)
-                    st.session_state.is_practicing = False
+                    st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
+                    st.session_state.practice_display_side = random.choice([0, 1])
+                else:
                     st.session_state.current_practice_word = None
-                    st.session_state.show_answer = False
-                    st.success("연습 단어가 랜덤으로 섞였습니다!")
-                else:
-                    st.warning("먼저 파일을 선택해 주세요.")
-
-        with col3:
-            if st.button("연습하기", use_container_width=True):
-                if len(st.session_state.words) > 0:
-                    st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
-                    st.session_state.is_practicing = True
-                    st.session_state.show_answer = False
-                    if len(st.session_state.practice_queue) > 0:
-                        st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-                        st.session_state.practice_display_side = random.choice([0, 1])
-                    else:
-                        st.session_state.current_practice_word = None
-                else:
-                    st.warning("먼저 파일을 선택해 주세요.")
+            else:
+                st.warning("먼저 파일을 선택해 주세요.")
 
     if st.session_state.is_practicing:
         st.write("---")
@@ -519,67 +548,71 @@ def render_practice_part(target_folder):
 def render_exam_part(target_folder):
     st.header("시험 파트")
 
-    txt_files = [f for f in os.listdir(target_folder) if f.endswith('.txt')]
+    folder_map = get_local_wordbook_structure(target_folder)
 
-    if len(txt_files) == 0:
-        st.warning(f"'{target_folder}' 폴더에 txt 파일이 없습니다. 깃허브의 {target_folder} 폴더에 txt 파일을 먼저 올려주세요.")
-    else:
-        selected_file_exam = st.selectbox("시험할 파일을 선택하세요", txt_files, key="exam_file_select")
+    if not folder_map:
+        st.warning(f"'{target_folder}' 폴더 및 하위 폴더에 txt 파일이 없습니다. 깃허브의 {target_folder} 폴더 안에 txt 파일을 먼저 올려주세요.")
+        return
 
-        top_col1, top_col2, top_col3, top_col4 = st.columns([1.2, 1.2, 1.2, 1.4], vertical_alignment="bottom")
+    selected_folder = st.selectbox("시험할 폴더를 선택하세요", list(folder_map.keys()), key="exam_folder_select")
+    selected_file_exam = st.selectbox("시험할 파일을 선택하세요", folder_map[selected_folder], key="exam_file_select")
 
-        with top_col1:
-            if st.button("파일 선택하기", key="exam_load", use_container_width=True):
-                file_path = os.path.join(target_folder, selected_file_exam)
-                loaded_words = load_words_from_file(file_path)
-                st.session_state.words = loaded_words
-                st.session_state.exam_source_words = list(loaded_words)
+    actual_folder = target_folder if selected_folder == "(루트)" else os.path.join(target_folder, selected_folder)
+
+    top_col1, top_col2, top_col3, top_col4 = st.columns([1.2, 1.2, 1.2, 1.4], vertical_alignment="bottom")
+
+    with top_col1:
+        if st.button("파일 선택하기", key="exam_load", use_container_width=True):
+            file_path = os.path.join(actual_folder, selected_file_exam)
+            loaded_words = load_words_from_file(file_path)
+            st.session_state.words = loaded_words
+            st.session_state.exam_source_words = list(loaded_words)
+            reset_exam_state()
+            st.success(f"'{selected_file_exam}'에서 {len(loaded_words)}개의 단어를 성공적으로 불러왔습니다!")
+
+    with top_col2:
+        if st.button("단어 랜덤으로 섞기", key="exam_shuffle", use_container_width=True):
+            if len(st.session_state.exam_source_words) > 0:
+                random.shuffle(st.session_state.exam_source_words)
                 reset_exam_state()
-                st.success(f"'{selected_file_exam}'에서 {len(loaded_words)}개의 단어를 성공적으로 불러왔습니다!")
+                st.success("시험 단어가 랜덤으로 섞였습니다!")
+            else:
+                st.warning("먼저 파일을 선택해 주세요.")
 
-        with top_col2:
-            if st.button("단어 랜덤으로 섞기", key="exam_shuffle", use_container_width=True):
-                if len(st.session_state.exam_source_words) > 0:
-                    random.shuffle(st.session_state.exam_source_words)
-                    reset_exam_state()
-                    st.success("시험 단어가 랜덤으로 섞였습니다!")
-                else:
-                    st.warning("먼저 파일을 선택해 주세요.")
+    with top_col3:
+        if st.button("시험 준비", key="exam_ready", use_container_width=True):
+            if len(st.session_state.exam_source_words) > 0:
+                reset_exam_state()
+                st.success("시험 준비가 완료되었습니다. 아래에서 시험 방식을 선택해 주세요.")
+            else:
+                st.warning("먼저 파일을 선택해 주세요.")
 
-        with top_col3:
-            if st.button("시험 준비", key="exam_ready", use_container_width=True):
-                if len(st.session_state.exam_source_words) > 0:
-                    reset_exam_state()
-                    st.success("시험 준비가 완료되었습니다. 아래에서 시험 방식을 선택해 주세요.")
-                else:
-                    st.warning("먼저 파일을 선택해 주세요.")
+    with top_col4:
+        max_count = max(1, len(st.session_state.exam_source_words)) if len(st.session_state.exam_source_words) > 0 else 1
+        st.session_state.exam_total_count = st.number_input(
+            "시험 개수 선택하기",
+            min_value=1,
+            max_value=max_count,
+            value=min(st.session_state.exam_total_count, max_count),
+            step=1,
+            key="exam_total_count_input"
+        )
 
-        with top_col4:
-            max_count = max(1, len(st.session_state.exam_source_words)) if len(st.session_state.exam_source_words) > 0 else 1
-            st.session_state.exam_total_count = st.number_input(
-                "시험 개수 선택하기",
-                min_value=1,
-                max_value=max_count,
-                value=min(st.session_state.exam_total_count, max_count),
-                step=1,
-                key="exam_total_count_input"
-            )
+    st.write("")
 
-        st.write("")
+    mode_col1, mode_col2, mode_col3 = st.columns(3)
 
-        mode_col1, mode_col2, mode_col3 = st.columns(3)
+    with mode_col1:
+        if st.button("단어 이름만 시험 보기", use_container_width=True):
+            start_exam('word_only')
 
-        with mode_col1:
-            if st.button("단어 이름만 시험 보기", use_container_width=True):
-                start_exam('word_only')
+    with mode_col2:
+        if st.button("단어 뜻만 시험 보기", use_container_width=True):
+            start_exam('meaning_only')
 
-        with mode_col2:
-            if st.button("단어 뜻만 시험 보기", use_container_width=True):
-                start_exam('meaning_only')
-
-        with mode_col3:
-            if st.button("랜덤으로 시험 보기", use_container_width=True):
-                start_exam('random')
+    with mode_col3:
+        if st.button("랜덤으로 시험 보기", use_container_width=True):
+            start_exam('random')
 
     if st.session_state.current_exam_word is not None:
         st.write("---")
@@ -676,19 +709,21 @@ def render_wordbook_part():
         uploaded_file = st.file_uploader("txt 파일을 업로드하세요", type=["txt"], key="wordbook_txt_upload")
 
         if uploaded_file is not None:
+            uploaded_text = None
+
             try:
                 uploaded_text = uploaded_file.getvalue().decode("utf-8")
             except UnicodeDecodeError:
                 try:
                     uploaded_text = uploaded_file.getvalue().decode("cp949")
                 except Exception:
-                    uploaded_text = None
                     st.error("txt 파일 인코딩을 읽지 못했습니다. UTF-8 또는 CP949 형식인지 확인해 주세요.")
 
             if uploaded_text is not None:
                 parsed_words, errors = parse_words_with_validation(uploaded_text)
 
                 st.write(f"검사 결과: 정상 단어 {len(parsed_words)}개")
+
                 if errors:
                     st.error("형식 오류가 있습니다.")
                     for err in errors:
@@ -698,8 +733,7 @@ def render_wordbook_part():
 
                 if parsed_words:
                     st.write("### 미리보기")
-                    preview_count = min(20, len(parsed_words))
-                    st.table(parsed_words[:preview_count])
+                    st.table(parsed_words[:min(20, len(parsed_words))])
 
                 with st.form("upload_txt_form"):
                     upload_title = st.text_input("저장할 제목을 입력하세요", placeholder="예: 정보처리기사 실기 오답노트")
@@ -730,6 +764,7 @@ def render_wordbook_part():
 
     with manual_tab:
         st.subheader("직접 입력해서 저장")
+
         with st.form("manual_wordbook_form"):
             manual_title = st.text_input("저장할 제목을 입력하세요", placeholder="예: 오늘 외운 단어")
             manual_text = st.text_area(
@@ -744,6 +779,7 @@ def render_wordbook_part():
             parsed_words, errors = parse_words_with_validation(manual_text)
 
             st.write(f"검사 결과: 정상 단어 {len(parsed_words)}개")
+
             if errors:
                 st.error("형식 오류가 있습니다.")
                 for err in errors:
@@ -753,8 +789,7 @@ def render_wordbook_part():
 
             if parsed_words:
                 st.write("### 미리보기")
-                preview_count = min(20, len(parsed_words))
-                st.table(parsed_words[:preview_count])
+                st.table(parsed_words[:min(20, len(parsed_words))])
 
             if not manual_title.strip():
                 st.warning("저장할 제목을 입력해 주세요.")
