@@ -1,6 +1,5 @@
 import streamlit as st
 import random
-import os
 import requests
 import base64
 from datetime import datetime
@@ -8,103 +7,85 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 
+# ---------------------------
+# Session State
+# ---------------------------
 def init_session_state():
-    if 'words' not in st.session_state:
-        st.session_state.words = []
+    defaults = {
+        "words": [],
+        "study_index": 0,
+        "is_studying": False,
+        "practice_queue": [],
+        "current_practice_word": None,
+        "is_practicing": False,
+        "practice_display_side": 0,
+        "practice_mode": "random",
+        "show_answer": False,
+        "exam_show_answer": False,
+        "exam_queue": [],
+        "exam_source_words": [],
+        "current_exam_word": None,
+        "is_examining": False,
+        "exam_mode": None,
+        "exam_total_count": 10,
+        "exam_current_number": 0,
+        "exam_correct_count": 0,
+        "exam_wrong_count": 0,
+        "exam_display_side": 0,
+        "exam_total_count_input": 10,
+    }
 
-    if 'study_index' not in st.session_state:
-        st.session_state.study_index = 0
-    if 'is_studying' not in st.session_state:
-        st.session_state.is_studying = False
-
-    if 'practice_queue' not in st.session_state:
-        st.session_state.practice_queue = []
-    if 'current_practice_word' not in st.session_state:
-        st.session_state.current_practice_word = None
-    if 'is_practicing' not in st.session_state:
-        st.session_state.is_practicing = False
-    if 'practice_display_side' not in st.session_state:
-        st.session_state.practice_display_side = 0
-    if 'practice_mode' not in st.session_state:
-        st.session_state.practice_mode = 'random'
-
-    if 'show_answer' not in st.session_state:
-        st.session_state.show_answer = False
-    if 'exam_show_answer' not in st.session_state:
-        st.session_state.exam_show_answer = False
-
-    if 'exam_queue' not in st.session_state:
-        st.session_state.exam_queue = []
-    if 'exam_source_words' not in st.session_state:
-        st.session_state.exam_source_words = []
-    if 'current_exam_word' not in st.session_state:
-        st.session_state.current_exam_word = None
-    if 'is_examining' not in st.session_state:
-        st.session_state.is_examining = False
-    if 'exam_mode' not in st.session_state:
-        st.session_state.exam_mode = None
-    if 'exam_total_count' not in st.session_state:
-        st.session_state.exam_total_count = 10
-    if 'exam_current_number' not in st.session_state:
-        st.session_state.exam_current_number = 0
-    if 'exam_correct_count' not in st.session_state:
-        st.session_state.exam_correct_count = 0
-    if 'exam_wrong_count' not in st.session_state:
-        st.session_state.exam_wrong_count = 0
-    if 'exam_display_side' not in st.session_state:
-        st.session_state.exam_display_side = 0
-    if 'exam_total_count_input' not in st.session_state:
-        st.session_state.exam_total_count_input = 10
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
-def load_words_from_file(file_name):
-    try:
-        with open(file_name, 'r', encoding='utf-8') as file:
-            lines = file.readlines()
+# ---------------------------
+# Word parsing
+# ---------------------------
+def parse_word_text(text):
+    normalized_text = text.replace("\r\n", "\n").replace("：", ":")
+    lines = normalized_text.split("\n")
 
-        parsed_words = []
-        i = 0
+    parsed_words = []
+    i = 0
 
-        while i < len(lines):
-            line = lines[i].strip()
+    while i < len(lines):
+        line = lines[i].strip()
 
-            if not line:
-                i += 1
-                continue
+        if not line:
+            i += 1
+            continue
 
-            line = line.replace('：', ':')
+        if ":" in line:
+            parts = line.split(":", 1)
+            word = parts[0].strip()
+            meaning = parts[1].strip()
+            if word and meaning:
+                parsed_words.append({"word": word, "meaning": meaning})
+            i += 1
+        else:
+            word = line
+            meaning = ""
+            next_index = i + 1
 
-            if ':' in line:
-                parts = line.split(':', 1)
-                word = parts[0].strip()
-                meaning = parts[1].strip()
+            while next_index < len(lines) and not lines[next_index].strip():
+                next_index += 1
 
-                if word and meaning:
-                    parsed_words.append({'word': word, 'meaning': meaning})
+            if next_index < len(lines):
+                meaning = lines[next_index].strip()
 
-                i += 1
-            else:
-                word = line
-                meaning = ""
+            if word and meaning:
+                parsed_words.append({"word": word, "meaning": meaning})
 
-                if i + 1 < len(lines):
-                    meaning = lines[i + 1].strip()
+            i = next_index + 1
 
-                if word and meaning:
-                    parsed_words.append({'word': word, 'meaning': meaning})
-
-                i += 2
-
-        return parsed_words
-
-    except Exception as e:
-        st.error(f"파일을 불러오는 중 오류가 발생했습니다: {e}")
-        return []
+    return parsed_words
 
 
 def parse_words_with_validation(text):
-    normalized_text = text.replace('\r\n', '\n').replace('：', ':')
-    lines = normalized_text.split('\n')
+    normalized_text = text.replace("\r\n", "\n").replace("：", ":")
+    lines = normalized_text.split("\n")
 
     parsed_words = []
     errors = []
@@ -118,8 +99,8 @@ def parse_words_with_validation(text):
             i += 1
             continue
 
-        if ':' in line:
-            parts = line.split(':', 1)
+        if ":" in line:
+            parts = line.split(":", 1)
             word = parts[0].strip()
             meaning = parts[1].strip()
 
@@ -130,7 +111,7 @@ def parse_words_with_validation(text):
             elif not meaning:
                 errors.append(f"{i + 1}번 줄: 뜻이 비어 있습니다.")
             else:
-                parsed_words.append({'word': word, 'meaning': meaning})
+                parsed_words.append({"word": word, "meaning": meaning})
 
             i += 1
         else:
@@ -152,13 +133,174 @@ def parse_words_with_validation(text):
             elif not meaning:
                 errors.append(f"{next_index + 1}번 줄: 뜻이 비어 있습니다.")
             else:
-                parsed_words.append({'word': word, 'meaning': meaning})
+                parsed_words.append({"word": word, "meaning": meaning})
 
             i = next_index + 1
 
     return parsed_words, errors
 
 
+# ---------------------------
+# Helpers
+# ---------------------------
+def make_safe_filename_part(name):
+    invalid_chars = ['\\', '/', ':', '*', '?', '"', '<', '>', '|']
+    safe_name = str(name).strip()
+
+    for ch in invalid_chars:
+        safe_name = safe_name.replace(ch, "_")
+
+    safe_name = safe_name.replace("\n", " ").replace("\r", " ")
+    safe_name = " ".join(safe_name.split())
+
+    if not safe_name:
+        safe_name = "untitled"
+
+    return safe_name
+
+
+def make_manual_filename_from_title(full_title):
+    safe_title = make_safe_filename_part(full_title).strip()
+
+    if not safe_title:
+        safe_title = "untitled"
+
+    if not safe_title.lower().endswith(".txt"):
+        safe_title = f"{safe_title}.txt"
+
+    return safe_title
+
+
+def get_default_manual_title_prefix():
+    korea_now = datetime.now(ZoneInfo("Asia/Seoul"))
+    return korea_now.strftime("%Y.%m.%d_%H.%M_")
+
+
+# ---------------------------
+# GitHub API
+# ---------------------------
+def get_github_headers():
+    token = str(st.secrets["github_token"]).strip()
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json"
+    }
+
+
+def get_repo_info():
+    owner = str(st.secrets["github_owner"]).strip()
+    repo = str(st.secrets["github_repo"]).strip()
+    branch = str(st.secrets["github_branch"]).strip()
+    return owner, repo, branch
+
+
+def encode_github_path(path):
+    return quote(str(path).strip(), safe="/")
+
+
+@st.cache_data(ttl=60)
+def github_get_contents_cached(path):
+    owner, repo, branch = get_repo_info()
+    encoded_path = encode_github_path(path)
+    encoded_branch = quote(branch, safe="")
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}?ref={encoded_branch}"
+    response = requests.get(url, headers=get_github_headers(), timeout=30)
+    return response.status_code, response.json() if response.content else {}
+
+
+@st.cache_data(ttl=60)
+def get_github_all_folders_recursive(base_path="word_list"):
+    collected = []
+
+    def walk_folder(path):
+        status_code, data = github_get_contents_cached(path)
+
+        if status_code != 200:
+            raise Exception(f"{path} 조회 실패 (상태 코드: {status_code})")
+
+        if not isinstance(data, list):
+            return
+
+        for item in data:
+            if item.get("type") == "dir":
+                folder_path = item.get("path")
+                collected.append(folder_path)
+                walk_folder(folder_path)
+
+    walk_folder(base_path)
+    collected.sort()
+    return collected
+
+
+@st.cache_data(ttl=60)
+def get_github_folders(base_path="word_list"):
+    try:
+        folders = get_github_all_folders_recursive(base_path)
+        return folders, None
+    except Exception as e:
+        return [], f"GitHub 폴더 목록 조회 중 오류가 발생했습니다: {e}"
+
+
+@st.cache_data(ttl=60)
+def get_github_txt_files(folder_path):
+    try:
+        status_code, data = github_get_contents_cached(folder_path)
+
+        if status_code != 200:
+            return [], f"선택한 폴더의 파일 목록을 불러오지 못했습니다. 상태 코드: {status_code}"
+
+        txt_files = []
+        if isinstance(data, list):
+            for item in data:
+                if item.get("type") == "file" and item.get("name", "").lower().endswith(".txt"):
+                    txt_files.append(item.get("name"))
+
+        txt_files.sort()
+        return txt_files, None
+
+    except Exception as e:
+        return [], f"파일 목록 조회 중 오류가 발생했습니다: {e}"
+
+
+@st.cache_data(ttl=60)
+def get_github_file_text(repo_file_path):
+    status_code, data = github_get_contents_cached(repo_file_path)
+
+    if status_code != 200:
+        raise Exception(f"GitHub 파일을 불러오지 못했습니다. 상태 코드: {status_code}")
+
+    content_b64 = data.get("content", "").replace("\n", "")
+    if not content_b64:
+        raise Exception("GitHub 파일 내용이 비어 있습니다.")
+
+    return base64.b64decode(content_b64).decode("utf-8")
+
+
+def clear_github_cache():
+    st.cache_data.clear()
+
+
+def upload_text_to_github(folder_path, file_name, text_content):
+    owner, repo, branch = get_repo_info()
+    repo_path = f"{str(folder_path).strip()}/{str(file_name).strip()}"
+    encoded_path = encode_github_path(repo_path)
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}"
+
+    content_b64 = base64.b64encode(text_content.encode("utf-8")).decode("utf-8")
+
+    payload = {
+        "message": f"Add word list: {repo_path}",
+        "content": content_b64,
+        "branch": branch
+    }
+
+    response = requests.put(url, headers=get_github_headers(), json=payload, timeout=30)
+    return response, repo_path
+
+
+# ---------------------------
+# Study / Practice / Exam logic
+# ---------------------------
 def reset_exam_state():
     st.session_state.is_examining = False
     st.session_state.exam_mode = None
@@ -177,9 +319,9 @@ def load_next_exam_question():
         st.session_state.exam_current_number += 1
         st.session_state.exam_show_answer = False
 
-        if st.session_state.exam_mode == 'meaning_only':
+        if st.session_state.exam_mode == "meaning_only":
             st.session_state.exam_display_side = 0
-        elif st.session_state.exam_mode == 'word_only':
+        elif st.session_state.exam_mode == "word_only":
             st.session_state.exam_display_side = 1
         else:
             st.session_state.exam_display_side = random.choice([0, 1])
@@ -214,13 +356,12 @@ def start_exam(mode):
     st.session_state.exam_show_answer = False
 
     load_next_exam_question()
-    st.rerun()
 
 
 def set_next_practice_display_side():
-    if st.session_state.practice_mode == 'meaning_only':
+    if st.session_state.practice_mode == "meaning_only":
         st.session_state.practice_display_side = 0
-    elif st.session_state.practice_mode == 'word_only':
+    elif st.session_state.practice_mode == "word_only":
         st.session_state.practice_display_side = 1
     else:
         st.session_state.practice_display_side = random.choice([0, 1])
@@ -272,174 +413,18 @@ def handle_practice_score(level):
         st.session_state.practice_queue.insert(pos, current_word)
 
     move_to_next_practice_word()
-    st.rerun()
 
 
-def get_github_headers():
-    token = str(st.secrets["github_token"]).strip()
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json"
-    }
-
-
-def get_repo_info():
-    owner = str(st.secrets["github_owner"]).strip()
-    repo = str(st.secrets["github_repo"]).strip()
-    branch = str(st.secrets["github_branch"]).strip()
-    return owner, repo, branch
-
-
-def encode_github_path(path):
-    return quote(str(path).strip(), safe='/')
-
-
-def github_get_contents(path):
-    owner, repo, branch = get_repo_info()
-    encoded_path = encode_github_path(path)
-    encoded_branch = quote(branch, safe='')
-    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}?ref={encoded_branch}"
-    response = requests.get(url, headers=get_github_headers(), timeout=30)
-    return response
-
-
-def download_github_file_to_local(repo_file_path, local_file_path):
-    response = github_get_contents(repo_file_path)
-
-    if response.status_code != 200:
-        raise Exception(f"GitHub 파일을 불러오지 못했습니다. 상태 코드: {response.status_code}")
-
-    data = response.json()
-    content_b64 = data.get("content", "").replace("\n", "")
-    decoded = base64.b64decode(content_b64).decode("utf-8")
-
-    local_folder = os.path.dirname(local_file_path)
-    if local_folder and not os.path.exists(local_folder):
-        os.makedirs(local_folder, exist_ok=True)
-
-    with open(local_file_path, "w", encoding="utf-8") as f:
-        f.write(decoded)
-
-
-def sync_selected_github_file_to_local(target_folder, selected_folder, selected_file):
-    local_base = target_folder
-    relative_folder = selected_folder.replace("word_list", "", 1).lstrip("/")
-
-    if relative_folder:
-        local_folder = os.path.join(local_base, relative_folder)
-    else:
-        local_folder = local_base
-
-    local_path = os.path.join(local_folder, selected_file)
+def load_words_from_github_file(selected_folder, selected_file):
     repo_file_path = f"{selected_folder}/{selected_file}"
-
-    download_github_file_to_local(repo_file_path, local_path)
-    return local_path
-
-
-def get_github_all_folders_recursive(base_path="word_list"):
-    collected = []
-
-    def walk_folder(path):
-        response = github_get_contents(path)
-
-        if response.status_code != 200:
-            raise Exception(f"{path} 조회 실패 (상태 코드: {response.status_code})")
-
-        data = response.json()
-
-        for item in data:
-            if item.get("type") == "dir":
-                folder_path = item.get("path")
-                collected.append(folder_path)
-                walk_folder(folder_path)
-
-    walk_folder(base_path)
-    collected.sort()
-    return collected
+    text = get_github_file_text(repo_file_path)
+    return parse_word_text(text)
 
 
-def get_github_folders(base_path="word_list"):
-    try:
-        folders = get_github_all_folders_recursive(base_path)
-        return folders, None
-    except Exception as e:
-        return [], f"GitHub 폴더 목록 조회 중 오류가 발생했습니다: {e}"
-
-
-def get_github_txt_files(folder_path):
-    try:
-        response = github_get_contents(folder_path)
-
-        if response.status_code != 200:
-            return [], f"선택한 폴더의 파일 목록을 불러오지 못했습니다. 상태 코드: {response.status_code}"
-
-        data = response.json()
-        txt_files = []
-
-        for item in data:
-            if item.get("type") == "file" and item.get("name", "").lower().endswith(".txt"):
-                txt_files.append(item.get("name"))
-
-        txt_files.sort()
-        return txt_files, None
-
-    except Exception as e:
-        return [], f"파일 목록 조회 중 오류가 발생했습니다: {e}"
-
-
-def make_safe_filename_part(name):
-    invalid_chars = ['\\', '/', ':', '*', '?', '"', '<', '>', '|']
-    safe_name = str(name).strip()
-
-    for ch in invalid_chars:
-        safe_name = safe_name.replace(ch, '_')
-
-    safe_name = safe_name.replace('\n', ' ').replace('\r', ' ')
-    safe_name = " ".join(safe_name.split())
-
-    if not safe_name:
-        safe_name = "untitled"
-
-    return safe_name
-
-
-def make_manual_filename_from_title(full_title):
-    safe_title = make_safe_filename_part(full_title).strip()
-
-    if not safe_title:
-        safe_title = "untitled"
-
-    if not safe_title.lower().endswith(".txt"):
-        safe_title = f"{safe_title}.txt"
-
-    return safe_title
-
-
-def get_default_manual_title_prefix():
-    korea_now = datetime.now(ZoneInfo("Asia/Seoul"))
-    return korea_now.strftime("%Y.%m.%d_%H.%M_")
-
-
-def upload_text_to_github(folder_path, file_name, text_content):
-    owner, repo, branch = get_repo_info()
-    repo_path = f"{str(folder_path).strip()}/{str(file_name).strip()}"
-    encoded_path = encode_github_path(repo_path)
-    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}"
-
-    content_b64 = base64.b64encode(text_content.encode("utf-8")).decode("utf-8")
-
-    payload = {
-        "message": f"Add word list: {repo_path}",
-        "content": content_b64,
-        "branch": branch
-    }
-
-    response = requests.put(url, headers=get_github_headers(), json=payload, timeout=30)
-    return response, repo_path
-
-
-def render_study_part(target_folder):
+# ---------------------------
+# UI Parts
+# ---------------------------
+def render_study_part():
     st.header("학습 파트")
 
     folders, folder_error = get_github_folders("word_list")
@@ -470,8 +455,7 @@ def render_study_part(target_folder):
     with col1:
         if st.button("파일 선택하기", use_container_width=True):
             try:
-                file_path = sync_selected_github_file_to_local(target_folder, selected_folder, selected_file)
-                st.session_state.words = load_words_from_file(file_path)
+                st.session_state.words = load_words_from_github_file(selected_folder, selected_file)
                 st.session_state.study_index = 0
                 st.session_state.is_studying = False
                 st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
@@ -500,17 +484,20 @@ def render_study_part(target_folder):
         if st.session_state.study_index < len(st.session_state.words):
             current_word = st.session_state.words[st.session_state.study_index]
 
-            if st.button("다음"):
+            if st.button("다음", key="study_next_btn"):
                 st.session_state.study_index += 1
-                st.rerun()
 
-            st.markdown(f"<div style='font-size: 24px;'>단어: {current_word['word']}</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='font-size: 24px;'>의미: {current_word['meaning']}</div>", unsafe_allow_html=True)
+            if st.session_state.study_index < len(st.session_state.words):
+                current_word = st.session_state.words[st.session_state.study_index]
+                st.markdown(f"<div style='font-size: 24px;'>단어: {current_word['word']}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='font-size: 24px;'>의미: {current_word['meaning']}</div>", unsafe_allow_html=True)
+            else:
+                st.success("모두 학습했습니다.")
         else:
             st.success("모두 학습했습니다.")
 
 
-def render_practice_part(target_folder):
+def render_practice_part():
     st.header("연습 파트")
 
     folders, folder_error = get_github_folders("word_list")
@@ -541,13 +528,12 @@ def render_practice_part(target_folder):
     with col1:
         if st.button("파일 선택하기", key="practice_load", use_container_width=True):
             try:
-                file_path = sync_selected_github_file_to_local(target_folder, selected_folder, selected_file)
-                st.session_state.words = load_words_from_file(file_path)
+                st.session_state.words = load_words_from_github_file(selected_folder, selected_file)
                 st.session_state.practice_queue = list(st.session_state.words)
                 st.session_state.is_practicing = False
                 st.session_state.current_practice_word = None
                 st.session_state.show_answer = False
-                st.session_state.practice_mode = 'random'
+                st.session_state.practice_mode = "random"
                 st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
             except Exception as e:
                 st.error(f"파일 선택 중 오류가 발생했습니다: {e}")
@@ -559,7 +545,7 @@ def render_practice_part(target_folder):
                 st.session_state.is_practicing = False
                 st.session_state.current_practice_word = None
                 st.session_state.show_answer = False
-                st.session_state.practice_mode = 'random'
+                st.session_state.practice_mode = "random"
                 st.success("연습 단어가 랜덤으로 섞였습니다!")
             else:
                 st.warning("먼저 파일을 선택해 주세요.")
@@ -576,13 +562,12 @@ def render_practice_part(target_folder):
                 st.warning("먼저 파일을 선택해 주세요.")
 
     st.write("")
-
     mode_col1, mode_col2, mode_col3 = st.columns(3)
 
     with mode_col1:
         if st.button("단어 이름만 연습하기", use_container_width=True):
             if len(st.session_state.words) > 0:
-                st.session_state.practice_mode = 'word_only'
+                st.session_state.practice_mode = "word_only"
                 st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
                 st.session_state.is_practicing = True
                 st.session_state.show_answer = False
@@ -597,7 +582,7 @@ def render_practice_part(target_folder):
     with mode_col2:
         if st.button("단어 뜻만 연습하기", use_container_width=True):
             if len(st.session_state.words) > 0:
-                st.session_state.practice_mode = 'meaning_only'
+                st.session_state.practice_mode = "meaning_only"
                 st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
                 st.session_state.is_practicing = True
                 st.session_state.show_answer = False
@@ -612,7 +597,7 @@ def render_practice_part(target_folder):
     with mode_col3:
         if st.button("랜덤으로 연습하기", use_container_width=True):
             if len(st.session_state.words) > 0:
-                st.session_state.practice_mode = 'random'
+                st.session_state.practice_mode = "random"
                 st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
                 st.session_state.is_practicing = True
                 st.session_state.show_answer = False
@@ -632,7 +617,6 @@ def render_practice_part(target_folder):
             with score_col1:
                 if st.button("정답", use_container_width=True):
                     st.session_state.show_answer = True
-                    st.rerun()
 
             with score_col2:
                 if st.button("100%", disabled=not st.session_state.show_answer, use_container_width=True):
@@ -652,28 +636,31 @@ def render_practice_part(target_folder):
 
             st.write("---")
 
-            if st.session_state.practice_display_side == 0:
-                question_text = st.session_state.current_practice_word['word']
-                answer_text = st.session_state.current_practice_word['meaning']
-            else:
-                question_text = st.session_state.current_practice_word['meaning']
-                answer_text = st.session_state.current_practice_word['word']
+            if st.session_state.current_practice_word is not None:
+                if st.session_state.practice_display_side == 0:
+                    question_text = st.session_state.current_practice_word["word"]
+                    answer_text = st.session_state.current_practice_word["meaning"]
+                else:
+                    question_text = st.session_state.current_practice_word["meaning"]
+                    answer_text = st.session_state.current_practice_word["word"]
 
-            st.markdown(
-                f"<div style='font-size: 40px; text-align: center; padding: 20px;'>문제: {question_text}</div>",
-                unsafe_allow_html=True
-            )
-
-            if st.session_state.show_answer:
                 st.markdown(
-                    f"<div style='font-size: 30px; text-align: center; color: gray; padding: 10px;'>정답: {answer_text}</div>",
+                    f"<div style='font-size: 40px; text-align: center; padding: 20px;'>문제: {question_text}</div>",
                     unsafe_allow_html=True
                 )
+
+                if st.session_state.show_answer:
+                    st.markdown(
+                        f"<div style='font-size: 30px; text-align: center; color: gray; padding: 10px;'>정답: {answer_text}</div>",
+                        unsafe_allow_html=True
+                    )
+            else:
+                st.success("모든 연습을 완료했습니다.")
         else:
             st.success("모든 연습을 완료했습니다.")
 
 
-def render_exam_part(target_folder):
+def render_exam_part():
     st.header("시험 파트")
 
     folders, folder_error = get_github_folders("word_list")
@@ -704,8 +691,7 @@ def render_exam_part(target_folder):
     with top_col1:
         if st.button("파일 선택하기", key="exam_load", use_container_width=True):
             try:
-                file_path = sync_selected_github_file_to_local(target_folder, selected_folder, selected_file_exam)
-                loaded_words = load_words_from_file(file_path)
+                loaded_words = load_words_from_github_file(selected_folder, selected_file_exam)
                 st.session_state.words = loaded_words
                 st.session_state.exam_source_words = list(loaded_words)
                 reset_exam_state()
@@ -755,25 +741,23 @@ def render_exam_part(target_folder):
             st.write("")
             if st.button("max", key="exam_count_max_btn", use_container_width=True):
                 st.session_state.exam_total_count_input = max_count
-                st.rerun()
 
         st.session_state.exam_total_count = st.session_state.exam_total_count_input
 
     st.write("")
-
     mode_col1, mode_col2, mode_col3 = st.columns(3)
 
     with mode_col1:
         if st.button("단어 이름만 시험 보기", use_container_width=True):
-            start_exam('word_only')
+            start_exam("word_only")
 
     with mode_col2:
         if st.button("단어 뜻만 시험 보기", use_container_width=True):
-            start_exam('meaning_only')
+            start_exam("meaning_only")
 
     with mode_col3:
         if st.button("랜덤으로 시험 보기", use_container_width=True):
-            start_exam('random')
+            start_exam("random")
 
     if st.session_state.current_exam_word is not None:
         st.write("---")
@@ -783,19 +767,16 @@ def render_exam_part(target_folder):
         with action_col1:
             if st.button("정답", key="exam_show_answer_btn", use_container_width=True):
                 st.session_state.exam_show_answer = True
-                st.rerun()
 
         with action_col2:
             if st.button("O", key="exam_o_btn", disabled=not st.session_state.exam_show_answer, use_container_width=True):
                 st.session_state.exam_correct_count += 1
                 load_next_exam_question()
-                st.rerun()
 
         with action_col3:
             if st.button("X", key="exam_x_btn", disabled=not st.session_state.exam_show_answer, use_container_width=True):
                 st.session_state.exam_wrong_count += 1
                 load_next_exam_question()
-                st.rerun()
 
         with action_col4:
             total = st.session_state.exam_total_count
@@ -807,24 +788,28 @@ def render_exam_part(target_folder):
 
         st.write("---")
 
-        if st.session_state.exam_display_side == 0:
-            question_text = st.session_state.current_exam_word['word']
-            answer_text = st.session_state.current_exam_word['meaning']
-        else:
-            question_text = st.session_state.current_exam_word['meaning']
-            answer_text = st.session_state.current_exam_word['word']
+        if st.session_state.current_exam_word is not None:
+            if st.session_state.exam_display_side == 0:
+                question_text = st.session_state.current_exam_word["word"]
+                answer_text = st.session_state.current_exam_word["meaning"]
+            else:
+                question_text = st.session_state.current_exam_word["meaning"]
+                answer_text = st.session_state.current_exam_word["word"]
 
-        st.markdown(
-            f"<div style='font-size: 42px; text-align: center; padding: 28px;'>문제: {question_text}</div>",
-            unsafe_allow_html=True
-        )
-
-        if st.session_state.exam_show_answer:
             st.markdown(
-                f"<div style='font-size: 30px; text-align: center; color: gray; padding: 12px;'>정답: {answer_text}</div>",
+                f"<div style='font-size: 42px; text-align: center; padding: 28px;'>문제: {question_text}</div>",
                 unsafe_allow_html=True
             )
 
+            if st.session_state.exam_show_answer:
+                st.markdown(
+                    f"<div style='font-size: 30px; text-align: center; color: gray; padding: 12px;'>정답: {answer_text}</div>",
+                    unsafe_allow_html=True
+                )
+        else:
+            st.success(
+                f"시험이 완료되었습니다. 맞음 {st.session_state.exam_correct_count}개, 틀림 {st.session_state.exam_wrong_count}개입니다."
+            )
     elif not st.session_state.is_examining:
         if st.session_state.exam_current_number > 0:
             total_answered = st.session_state.exam_correct_count + st.session_state.exam_wrong_count
@@ -837,6 +822,12 @@ def render_exam_part(target_folder):
 def render_wordbook_part():
     st.header("단어장 파트")
     st.caption("사용자는 직접 txt 파일을 업로드하거나 내용을 입력해 새 단어장을 만들 수 있습니다. 삭제는 GitHub 관리자만 할 수 있습니다.")
+
+    top_left, top_right = st.columns([5, 1])
+    with top_right:
+        if st.button("새로고침", use_container_width=True):
+            clear_github_cache()
+            st.success("GitHub 목록 캐시를 새로고침했습니다.")
 
     folders, folder_error = get_github_folders("word_list")
 
@@ -915,6 +906,7 @@ def render_wordbook_part():
                             response, repo_path = upload_text_to_github(selected_folder, final_file_name, uploaded_text)
 
                             if response.status_code in [200, 201]:
+                                clear_github_cache()
                                 st.success(f"GitHub에 저장되었습니다: {repo_path}")
                             else:
                                 st.error(f"GitHub 저장 실패: {response.status_code}")
@@ -932,7 +924,7 @@ def render_wordbook_part():
             manual_title = st.text_input(
                 "저장할 제목을 입력하세요",
                 value=default_title_prefix,
-                placeholder="예: 2026.07.17_14.49_일본어 오답"
+                placeholder="예: 2026.07.17_15.11_일본어 오답"
             )
             manual_text = st.text_area(
                 "단어장을 입력하세요",
@@ -975,6 +967,7 @@ def render_wordbook_part():
                 response, repo_path = upload_text_to_github(selected_folder, final_file_name, manual_text)
 
                 if response.status_code in [200, 201]:
+                    clear_github_cache()
                     st.success(f"GitHub에 저장되었습니다: {repo_path}")
                 else:
                     st.error(f"GitHub 저장 실패: {response.status_code}")
@@ -984,28 +977,26 @@ def render_wordbook_part():
                         st.text(response.text)
 
 
+# ---------------------------
+# Main
+# ---------------------------
 def main():
     init_session_state()
 
     st.title("단어 암기 프로그램")
 
     st.sidebar.title("메뉴")
-    page = st.sidebar.radio("파트를 선택하세요", ['학습', '연습', '시험', '단어장'])
+    page = st.sidebar.radio("파트를 선택하세요", ["학습", "연습", "시험", "단어장"])
 
-    target_folder = 'word_list'
-
-    if not os.path.exists(target_folder):
-        os.makedirs(target_folder)
-
-    if page == '학습':
-        render_study_part(target_folder)
-    elif page == '연습':
-        render_practice_part(target_folder)
-    elif page == '시험':
-        render_exam_part(target_folder)
-    elif page == '단어장':
+    if page == "학습":
+        render_study_part()
+    elif page == "연습":
+        render_practice_part()
+    elif page == "시험":
+        render_exam_part()
+    elif page == "단어장":
         render_wordbook_part()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
