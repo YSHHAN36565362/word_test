@@ -25,6 +25,8 @@ def init_session_state():
         st.session_state.is_practicing = False
     if 'practice_display_side' not in st.session_state:
         st.session_state.practice_display_side = 0
+    if 'practice_mode' not in st.session_state:
+        st.session_state.practice_mode = 'random'
 
     if 'show_answer' not in st.session_state:
         st.session_state.show_answer = False
@@ -220,7 +222,7 @@ def move_to_next_practice_word():
 
     if len(st.session_state.practice_queue) > 0:
         st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-        st.session_state.practice_display_side = random.choice([0, 1])
+        set_next_practice_display_side()
     else:
         st.session_state.current_practice_word = None
 
@@ -239,6 +241,13 @@ def get_random_position_by_percent(n, start_ratio, end_ratio):
         start_idx, end_idx = end_idx, start_idx
 
     return random.randint(start_idx, end_idx)
+
+def set_next_practice_display_side():
+    if st.session_state.practice_mode == 'meaning_only':
+        st.session_state.practice_display_side = 0
+    elif st.session_state.practice_mode == 'word_only':
+        st.session_state.practice_display_side = 1
+    else:
 
 
 def handle_practice_score(level):
@@ -378,7 +387,10 @@ def make_safe_filename_part(name):
 
 
 def make_manual_filename_from_title(full_title):
-    safe_title = make_safe_filename_part(full_title)
+    safe_title = make_safe_filename_part(full_title).strip()
+
+    if not safe_title:
+        safe_title = "untitled"
 
     if not safe_title.lower().endswith(".txt"):
         safe_title = f"{safe_title}.txt"
@@ -489,6 +501,7 @@ def render_practice_part(target_folder):
             st.session_state.is_practicing = False
             st.session_state.current_practice_word = None
             st.session_state.show_answer = False
+            st.session_state.practice_mode = 'random'
             st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
 
     with col2:
@@ -498,21 +511,20 @@ def render_practice_part(target_folder):
                 st.session_state.is_practicing = False
                 st.session_state.current_practice_word = None
                 st.session_state.show_answer = False
+                st.session_state.practice_mode = 'random'
                 st.success("연습 단어가 랜덤으로 섞였습니다!")
             else:
                 st.warning("먼저 파일을 선택해 주세요.")
 
     with col3:
-        if st.button("연습하기", use_container_width=True):
+        if st.button("연습 준비", use_container_width=True):
             if len(st.session_state.words) > 0:
                 st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
-                st.session_state.is_practicing = True
+                st.session_state.is_practicing = False
+                st.session_state.current_practice_word = None
                 st.session_state.show_answer = False
-                if len(st.session_state.practice_queue) > 0:
-                    st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-                    st.session_state.practice_display_side = random.choice([0, 1])
-                else:
-                    st.session_state.current_practice_word = None
+                st.session_state.practice_mode = 'random'
+                st.success("연습 준비가 완료되었습니다. 아래에서 연습 방식을 선택해 주세요.")
             else:
                 st.warning("먼저 파일을 선택해 주세요.")
 
@@ -609,14 +621,31 @@ def render_exam_part(target_folder):
 
     with top_col4:
         max_count = max(1, len(st.session_state.exam_source_words)) if len(st.session_state.exam_source_words) > 0 else 1
-        st.session_state.exam_total_count = st.number_input(
-            "시험 개수 선택하기",
-            min_value=1,
-            max_value=max_count,
-            value=min(st.session_state.exam_total_count, max_count),
-            step=1,
-            key="exam_total_count_input"
-        )
+
+        if "exam_total_count_input" not in st.session_state:
+            st.session_state.exam_total_count_input = min(st.session_state.exam_total_count, max_count)
+
+        if st.session_state.exam_total_count_input > max_count:
+            st.session_state.exam_total_count_input = max_count
+
+        inner_col1, inner_col2 = st.columns([2.2, 1])
+
+        with inner_col1:
+            st.number_input(
+                "시험 개수 선택하기",
+                min_value=1,
+                max_value=max_count,
+                step=1,
+                key="exam_total_count_input"
+            )
+
+        with inner_col2:
+            st.write("")
+            if st.button("max", key="exam_count_max_btn", use_container_width=True):
+                st.session_state.exam_total_count_input = max_count
+                st.rerun()
+
+        st.session_state.exam_total_count = st.session_state.exam_total_count_input
 
     st.write("")
 
