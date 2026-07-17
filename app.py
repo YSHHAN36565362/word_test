@@ -53,6 +53,8 @@ def init_session_state():
         st.session_state.exam_wrong_count = 0
     if 'exam_display_side' not in st.session_state:
         st.session_state.exam_display_side = 0
+    if 'exam_total_count_input' not in st.session_state:
+        st.session_state.exam_total_count_input = 10
 
 
 def load_words_from_file(file_name):
@@ -81,7 +83,6 @@ def load_words_from_file(file_name):
                     parsed_words.append({'word': word, 'meaning': meaning})
 
                 i += 1
-
             else:
                 word = line
                 meaning = ""
@@ -132,7 +133,6 @@ def parse_words_with_validation(text):
                 parsed_words.append({'word': word, 'meaning': meaning})
 
             i += 1
-
         else:
             word = line
             next_index = i + 1
@@ -217,6 +217,15 @@ def start_exam(mode):
     st.rerun()
 
 
+def set_next_practice_display_side():
+    if st.session_state.practice_mode == 'meaning_only':
+        st.session_state.practice_display_side = 0
+    elif st.session_state.practice_mode == 'word_only':
+        st.session_state.practice_display_side = 1
+    else:
+        st.session_state.practice_display_side = random.choice([0, 1])
+
+
 def move_to_next_practice_word():
     st.session_state.show_answer = False
 
@@ -241,13 +250,6 @@ def get_random_position_by_percent(n, start_ratio, end_ratio):
         start_idx, end_idx = end_idx, start_idx
 
     return random.randint(start_idx, end_idx)
-
-def set_next_practice_display_side():
-    if st.session_state.practice_mode == 'meaning_only':
-        st.session_state.practice_display_side = 0
-    elif st.session_state.practice_mode == 'word_only':
-        st.session_state.practice_display_side = 1
-    else:
 
 
 def handle_practice_score(level):
@@ -301,6 +303,40 @@ def github_get_contents(path):
     return response
 
 
+def download_github_file_to_local(repo_file_path, local_file_path):
+    response = github_get_contents(repo_file_path)
+
+    if response.status_code != 200:
+        raise Exception(f"GitHub 파일을 불러오지 못했습니다. 상태 코드: {response.status_code}")
+
+    data = response.json()
+    content_b64 = data.get("content", "").replace("\n", "")
+    decoded = base64.b64decode(content_b64).decode("utf-8")
+
+    local_folder = os.path.dirname(local_file_path)
+    if local_folder and not os.path.exists(local_folder):
+        os.makedirs(local_folder, exist_ok=True)
+
+    with open(local_file_path, "w", encoding="utf-8") as f:
+        f.write(decoded)
+
+
+def sync_selected_github_file_to_local(target_folder, selected_folder, selected_file):
+    local_base = target_folder
+    relative_folder = selected_folder.replace("word_list", "", 1).lstrip("/")
+
+    if relative_folder:
+        local_folder = os.path.join(local_base, relative_folder)
+    else:
+        local_folder = local_base
+
+    local_path = os.path.join(local_folder, selected_file)
+    repo_file_path = f"{selected_folder}/{selected_file}"
+
+    download_github_file_to_local(repo_file_path, local_path)
+    return local_path
+
+
 def get_github_all_folders_recursive(base_path="word_list"):
     collected = []
 
@@ -350,24 +386,6 @@ def get_github_txt_files(folder_path):
 
     except Exception as e:
         return [], f"파일 목록 조회 중 오류가 발생했습니다: {e}"
-
-
-def get_local_wordbook_structure(base_folder='word_list'):
-    folder_map = {}
-
-    if not os.path.exists(base_folder):
-        os.makedirs(base_folder)
-
-    for root, dirs, files in os.walk(base_folder):
-        txt_files = sorted([f for f in files if f.lower().endswith('.txt')])
-
-        if txt_files:
-            rel_folder = os.path.relpath(root, base_folder)
-            if rel_folder == ".":
-                rel_folder = "(루트)"
-            folder_map[rel_folder] = txt_files
-
-    return folder_map
 
 
 def make_safe_filename_part(name):
@@ -424,26 +442,41 @@ def upload_text_to_github(folder_path, file_name, text_content):
 def render_study_part(target_folder):
     st.header("학습 파트")
 
-    folder_map = get_local_wordbook_structure(target_folder)
+    folders, folder_error = get_github_folders("word_list")
 
-    if not folder_map:
-        st.warning(f"'{target_folder}' 폴더 및 하위 폴더에 txt 파일이 없습니다. 깃허브의 {target_folder} 폴더 안에 txt 파일을 먼저 올려주세요.")
+    if folder_error:
+        st.error(folder_error)
         return
 
-    selected_folder = st.selectbox("학습할 폴더를 선택하세요", list(folder_map.keys()), key="study_folder_select")
-    selected_file = st.selectbox("학습할 텍스트 파일을 선택하세요", folder_map[selected_folder], key="study_file_select")
+    if not folders:
+        st.warning("GitHub의 word_list 아래에 선택 가능한 폴더가 없습니다.")
+        return
 
-    actual_folder = target_folder if selected_folder == "(루트)" else os.path.join(target_folder, selected_folder)
+    selected_folder = st.selectbox("학습할 폴더를 선택하세요", folders, key="study_folder_select")
+
+    txt_files, files_error = get_github_txt_files(selected_folder)
+    if files_error:
+        st.error(files_error)
+        return
+
+    if not txt_files:
+        st.warning("선택한 폴더에 txt 파일이 없습니다.")
+        return
+
+    selected_file = st.selectbox("학습할 텍스트 파일을 선택하세요", txt_files, key="study_file_select")
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
         if st.button("파일 선택하기", use_container_width=True):
-            file_path = os.path.join(actual_folder, selected_file)
-            st.session_state.words = load_words_from_file(file_path)
-            st.session_state.study_index = 0
-            st.session_state.is_studying = False
-            st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
+            try:
+                file_path = sync_selected_github_file_to_local(target_folder, selected_folder, selected_file)
+                st.session_state.words = load_words_from_file(file_path)
+                st.session_state.study_index = 0
+                st.session_state.is_studying = False
+                st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
+            except Exception as e:
+                st.error(f"파일 선택 중 오류가 발생했습니다: {e}")
 
     with col2:
         if st.button("랜덤으로 섞기", use_container_width=True):
@@ -480,29 +513,44 @@ def render_study_part(target_folder):
 def render_practice_part(target_folder):
     st.header("연습 파트")
 
-    folder_map = get_local_wordbook_structure(target_folder)
+    folders, folder_error = get_github_folders("word_list")
 
-    if not folder_map:
-        st.warning(f"'{target_folder}' 폴더 및 하위 폴더에 txt 파일이 없습니다. 깃허브의 {target_folder} 폴더 안에 txt 파일을 먼저 올려주세요.")
+    if folder_error:
+        st.error(folder_error)
         return
 
-    selected_folder = st.selectbox("연습할 폴더를 선택하세요", list(folder_map.keys()), key="practice_folder_select")
-    selected_file = st.selectbox("파일을 선택하세요.", folder_map[selected_folder], key="practice_file_select")
+    if not folders:
+        st.warning("GitHub의 word_list 아래에 선택 가능한 폴더가 없습니다.")
+        return
 
-    actual_folder = target_folder if selected_folder == "(루트)" else os.path.join(target_folder, selected_folder)
+    selected_folder = st.selectbox("연습할 폴더를 선택하세요", folders, key="practice_folder_select")
+
+    txt_files, files_error = get_github_txt_files(selected_folder)
+    if files_error:
+        st.error(files_error)
+        return
+
+    if not txt_files:
+        st.warning("선택한 폴더에 txt 파일이 없습니다.")
+        return
+
+    selected_file = st.selectbox("파일을 선택하세요.", txt_files, key="practice_file_select")
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
         if st.button("파일 선택하기", key="practice_load", use_container_width=True):
-            file_path = os.path.join(actual_folder, selected_file)
-            st.session_state.words = load_words_from_file(file_path)
-            st.session_state.practice_queue = list(st.session_state.words)
-            st.session_state.is_practicing = False
-            st.session_state.current_practice_word = None
-            st.session_state.show_answer = False
-            st.session_state.practice_mode = 'random'
-            st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
+            try:
+                file_path = sync_selected_github_file_to_local(target_folder, selected_folder, selected_file)
+                st.session_state.words = load_words_from_file(file_path)
+                st.session_state.practice_queue = list(st.session_state.words)
+                st.session_state.is_practicing = False
+                st.session_state.current_practice_word = None
+                st.session_state.show_answer = False
+                st.session_state.practice_mode = 'random'
+                st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
+            except Exception as e:
+                st.error(f"파일 선택 중 오류가 발생했습니다: {e}")
 
     with col2:
         if st.button("단어 랜덤으로 섞기", use_container_width=True):
@@ -523,8 +571,56 @@ def render_practice_part(target_folder):
                 st.session_state.is_practicing = False
                 st.session_state.current_practice_word = None
                 st.session_state.show_answer = False
-                st.session_state.practice_mode = 'random'
                 st.success("연습 준비가 완료되었습니다. 아래에서 연습 방식을 선택해 주세요.")
+            else:
+                st.warning("먼저 파일을 선택해 주세요.")
+
+    st.write("")
+
+    mode_col1, mode_col2, mode_col3 = st.columns(3)
+
+    with mode_col1:
+        if st.button("단어 이름만 연습하기", use_container_width=True):
+            if len(st.session_state.words) > 0:
+                st.session_state.practice_mode = 'word_only'
+                st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
+                st.session_state.is_practicing = True
+                st.session_state.show_answer = False
+                if len(st.session_state.practice_queue) > 0:
+                    st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
+                    set_next_practice_display_side()
+                else:
+                    st.session_state.current_practice_word = None
+            else:
+                st.warning("먼저 파일을 선택해 주세요.")
+
+    with mode_col2:
+        if st.button("단어 뜻만 연습하기", use_container_width=True):
+            if len(st.session_state.words) > 0:
+                st.session_state.practice_mode = 'meaning_only'
+                st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
+                st.session_state.is_practicing = True
+                st.session_state.show_answer = False
+                if len(st.session_state.practice_queue) > 0:
+                    st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
+                    set_next_practice_display_side()
+                else:
+                    st.session_state.current_practice_word = None
+            else:
+                st.warning("먼저 파일을 선택해 주세요.")
+
+    with mode_col3:
+        if st.button("랜덤으로 연습하기", use_container_width=True):
+            if len(st.session_state.words) > 0:
+                st.session_state.practice_mode = 'random'
+                st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
+                st.session_state.is_practicing = True
+                st.session_state.show_answer = False
+                if len(st.session_state.practice_queue) > 0:
+                    st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
+                    set_next_practice_display_side()
+                else:
+                    st.session_state.current_practice_word = None
             else:
                 st.warning("먼저 파일을 선택해 주세요.")
 
@@ -580,27 +676,46 @@ def render_practice_part(target_folder):
 def render_exam_part(target_folder):
     st.header("시험 파트")
 
-    folder_map = get_local_wordbook_structure(target_folder)
+    folders, folder_error = get_github_folders("word_list")
 
-    if not folder_map:
-        st.warning(f"'{target_folder}' 폴더 및 하위 폴더에 txt 파일이 없습니다. 깃허브의 {target_folder} 폴더 안에 txt 파일을 먼저 올려주세요.")
+    if folder_error:
+        st.error(folder_error)
         return
 
-    selected_folder = st.selectbox("시험할 폴더를 선택하세요", list(folder_map.keys()), key="exam_folder_select")
-    selected_file_exam = st.selectbox("시험할 파일을 선택하세요", folder_map[selected_folder], key="exam_file_select")
+    if not folders:
+        st.warning("GitHub의 word_list 아래에 선택 가능한 폴더가 없습니다.")
+        return
 
-    actual_folder = target_folder if selected_folder == "(루트)" else os.path.join(target_folder, selected_folder)
+    selected_folder = st.selectbox("시험할 폴더를 선택하세요", folders, key="exam_folder_select")
 
-    top_col1, top_col2, top_col3, top_col4 = st.columns([1.2, 1.2, 1.2, 1.4], vertical_alignment="bottom")
+    txt_files, files_error = get_github_txt_files(selected_folder)
+    if files_error:
+        st.error(files_error)
+        return
+
+    if not txt_files:
+        st.warning("선택한 폴더에 txt 파일이 없습니다.")
+        return
+
+    selected_file_exam = st.selectbox("시험할 파일을 선택하세요", txt_files, key="exam_file_select")
+
+    top_col1, top_col2, top_col3, top_col4 = st.columns([1.2, 1.2, 1.2, 1.6], vertical_alignment="bottom")
 
     with top_col1:
         if st.button("파일 선택하기", key="exam_load", use_container_width=True):
-            file_path = os.path.join(actual_folder, selected_file_exam)
-            loaded_words = load_words_from_file(file_path)
-            st.session_state.words = loaded_words
-            st.session_state.exam_source_words = list(loaded_words)
-            reset_exam_state()
-            st.success(f"'{selected_file_exam}'에서 {len(loaded_words)}개의 단어를 성공적으로 불러왔습니다!")
+            try:
+                file_path = sync_selected_github_file_to_local(target_folder, selected_folder, selected_file_exam)
+                loaded_words = load_words_from_file(file_path)
+                st.session_state.words = loaded_words
+                st.session_state.exam_source_words = list(loaded_words)
+                reset_exam_state()
+                st.session_state.exam_total_count_input = min(
+                    max(1, len(st.session_state.exam_source_words)),
+                    st.session_state.exam_total_count_input
+                )
+                st.success(f"'{selected_file_exam}'에서 {len(loaded_words)}개의 단어를 성공적으로 불러왔습니다!")
+            except Exception as e:
+                st.error(f"파일 선택 중 오류가 발생했습니다: {e}")
 
     with top_col2:
         if st.button("단어 랜덤으로 섞기", key="exam_shuffle", use_container_width=True):
@@ -621,9 +736,6 @@ def render_exam_part(target_folder):
 
     with top_col4:
         max_count = max(1, len(st.session_state.exam_source_words)) if len(st.session_state.exam_source_words) > 0 else 1
-
-        if "exam_total_count_input" not in st.session_state:
-            st.session_state.exam_total_count_input = min(st.session_state.exam_total_count, max_count)
 
         if st.session_state.exam_total_count_input > max_count:
             st.session_state.exam_total_count_input = max_count
@@ -795,7 +907,7 @@ def render_wordbook_part():
                         elif len(parsed_words) == 0:
                             st.warning("저장할 정상 단어가 없습니다.")
                         elif errors:
-                            st.warning("형식 오류를 먼저 수정한 ��� 저장해 주세요.")
+                            st.warning("형식 오류를 먼저 수정한 뒤 저장해 주세요.")
                         elif upload_password_input != str(st.secrets["upload_password"]).strip():
                             st.error("업로드 비밀번호가 올바르지 않습니다.")
                         else:
