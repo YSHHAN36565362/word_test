@@ -12,7 +12,6 @@ def init_session_state():
     if 'is_studying' not in st.session_state:
         st.session_state.is_studying = False
 
-    # ***** 연속 수정 안내: 기존 테스트 상태를 연습 상태로 이름 변경했습니다.
     if 'practice_queue' not in st.session_state:
         st.session_state.practice_queue = []
     if 'current_practice_word' not in st.session_state:
@@ -22,13 +21,11 @@ def init_session_state():
     if 'practice_display_side' not in st.session_state:
         st.session_state.practice_display_side = 0
 
-    # ***** 연속 수정 안내: 연습/시험에서 정답 표시 여부를 각각 따로 관리합니다.
     if 'show_answer' not in st.session_state:
         st.session_state.show_answer = False
     if 'exam_show_answer' not in st.session_state:
         st.session_state.exam_show_answer = False
 
-    # ***** 연속 수정 안내: 시험 파트에 필요한 상태값들을 새로 추가했습니다.
     if 'exam_queue' not in st.session_state:
         st.session_state.exam_queue = []
     if 'exam_source_words' not in st.session_state:
@@ -38,7 +35,7 @@ def init_session_state():
     if 'is_examining' not in st.session_state:
         st.session_state.is_examining = False
     if 'exam_mode' not in st.session_state:
-        st.session_state.exam_mode = None  # 'meaning_only', 'word_only', 'random'
+        st.session_state.exam_mode = None
     if 'exam_total_count' not in st.session_state:
         st.session_state.exam_total_count = 10
     if 'exam_current_number' not in st.session_state:
@@ -97,7 +94,6 @@ def load_words_from_file(file_name):
         return []
 
 
-# ***** 연속 수정 안내: 시험 시작 전 상태를 한 번에 정리하는 함수입니다.
 def reset_exam_state():
     st.session_state.is_examining = False
     st.session_state.exam_mode = None
@@ -110,7 +106,6 @@ def reset_exam_state():
     st.session_state.exam_display_side = 0
 
 
-# ***** 연속 수정 안내: 시험에서 다음 문제를 꺼내는 함수입니다.
 def load_next_exam_question():
     if len(st.session_state.exam_queue) > 0:
         st.session_state.current_exam_word = st.session_state.exam_queue.pop(0)
@@ -118,9 +113,9 @@ def load_next_exam_question():
         st.session_state.exam_show_answer = False
 
         if st.session_state.exam_mode == 'meaning_only':
-            st.session_state.exam_display_side = 0  # 뜻만 출력(문제=뜻, 정답=단어)
+            st.session_state.exam_display_side = 0
         elif st.session_state.exam_mode == 'word_only':
-            st.session_state.exam_display_side = 1  # 단어만 출력(문제=단어, 정답=뜻)
+            st.session_state.exam_display_side = 1
         else:
             st.session_state.exam_display_side = random.choice([0, 1])
     else:
@@ -128,7 +123,6 @@ def load_next_exam_question():
         st.session_state.is_examining = False
 
 
-# ***** 연속 수정 안내: 시험 시작 함수입니다.
 def start_exam(mode):
     if len(st.session_state.exam_source_words) == 0:
         st.warning("먼저 파일을 선택해 단어를 불러와 주세요.")
@@ -158,13 +152,61 @@ def start_exam(mode):
     st.rerun()
 
 
+def move_to_next_practice_word():
+    st.session_state.show_answer = False
+
+    if len(st.session_state.practice_queue) > 0:
+        st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
+        st.session_state.practice_display_side = random.choice([0, 1])
+    else:
+        st.session_state.current_practice_word = None
+
+
+def get_random_position_by_percent(n, start_ratio, end_ratio):
+    if n <= 0:
+        return 0
+
+    start_idx = int(n * start_ratio)
+    end_idx = int(n * end_ratio)
+
+    start_idx = max(0, min(start_idx, n))
+    end_idx = max(0, min(end_idx, n))
+
+    if start_idx > end_idx:
+        start_idx, end_idx = end_idx, start_idx
+
+    return random.randint(start_idx, end_idx)
+
+
+def handle_practice_score(level):
+    current_word = st.session_state.current_practice_word
+    if current_word is None:
+        return
+
+    n = len(st.session_state.practice_queue)
+
+    if level == 100:
+        pass
+    elif level == 60:
+        pos = get_random_position_by_percent(n, 0.6, 0.8)
+        st.session_state.practice_queue.insert(pos, current_word)
+    elif level == 40:
+        pos = get_random_position_by_percent(n, 0.3, 0.5)
+        st.session_state.practice_queue.insert(pos, current_word)
+    elif level == 0:
+        pos = get_random_position_by_percent(n, 0.1, 0.2)
+        st.session_state.practice_queue.insert(pos, current_word)
+
+    move_to_next_practice_word()
+    st.rerun()
+
+
 def main():
     init_session_state()
 
     st.title("단어 암기 프로그램")
 
     st.sidebar.title("메뉴")
-    # ***** 연속 수정 안내: 테스트를 연습으로 바꾸고, 시험 파트를 새로 추가했습니다.
     page = st.sidebar.radio("파트를 선택하세요", ['학습', '연습', '시험'])
 
     target_folder = 'word_list'
@@ -182,7 +224,6 @@ def main():
         else:
             selected_file = st.selectbox("학습할 텍스트 파일을 선택하세요", txt_files, key="study_file_select")
 
-            # ***** 연속 수정 안내: 학습 파트의 3버튼을 가로 배치했습니다.
             col1, col2, col3 = st.columns(3)
 
             with col1:
@@ -215,7 +256,6 @@ def main():
             if st.session_state.study_index < len(st.session_state.words):
                 current_word = st.session_state.words[st.session_state.study_index]
 
-                # ***** 연속 수정 안내: '다음' 버튼을 단어와 의미 출력 내용 위로 끌어올렸습니다.
                 if st.button("다음"):
                     st.session_state.study_index += 1
                     st.rerun()
@@ -234,7 +274,6 @@ def main():
         else:
             selected_file_practice = st.selectbox("파일을 선택하세요.", txt_files, key="practice_file_select")
 
-            # ***** 연속 수정 안내: 연습 파트의 3버튼을 가로 배치했습니다.
             col1, col2, col3 = st.columns(3)
 
             with col1:
@@ -275,61 +314,28 @@ def main():
         if st.session_state.is_practicing:
             st.write("---")
             if st.session_state.current_practice_word is not None:
-                # ***** 연속 수정 안내: 버튼이 글자 길이에 따라 움직이지 않도록 단어 출력보다 위로 배치했습니다.
-                col1, col2, col3, col4 = st.columns(4)
+                score_col1, score_col2, score_col3, score_col4, score_col5 = st.columns(5)
 
-                with col1:
+                with score_col1:
                     if st.button("정답", use_container_width=True):
                         st.session_state.show_answer = True
                         st.rerun()
 
-                with col2:
-                    if st.button("아는 단어", disabled=not st.session_state.show_answer, use_container_width=True):
-                        n = len(st.session_state.practice_queue)
-                        pos = n - random.randint(5, 10)
-                        pos = max(0, pos)
-                        st.session_state.practice_queue.insert(pos, st.session_state.current_practice_word)
+                with score_col2:
+                    if st.button("100%", disabled=not st.session_state.show_answer, use_container_width=True):
+                        handle_practice_score(100)
 
-                        st.session_state.show_answer = False
-                        if len(st.session_state.practice_queue) > 0:
-                            st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-                            st.session_state.practice_display_side = random.choice([0, 1])
-                        else:
-                            st.session_state.current_practice_word = None
-                        st.rerun()
+                with score_col3:
+                    if st.button("60%", disabled=not st.session_state.show_answer, use_container_width=True):
+                        handle_practice_score(60)
 
-                with col3:
-                    if st.button("모르는 단어", disabled=not st.session_state.show_answer, use_container_width=True):
-                        n = len(st.session_state.practice_queue)
-                        pos = random.randint(5, 10)
-                        pos = min(n, pos)
-                        st.session_state.practice_queue.insert(pos, st.session_state.current_practice_word)
+                with score_col4:
+                    if st.button("40%", disabled=not st.session_state.show_answer, use_container_width=True):
+                        handle_practice_score(40)
 
-                        st.session_state.show_answer = False
-                        if len(st.session_state.practice_queue) > 0:
-                            st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-                            st.session_state.practice_display_side = random.choice([0, 1])
-                        else:
-                            st.session_state.current_practice_word = None
-                        st.rerun()
-
-                with col4:
-                    if st.button("헷갈리는 단어", disabled=not st.session_state.show_answer, use_container_width=True):
-                        n = len(st.session_state.practice_queue)
-                        lower = min(n, 10)
-                        upper = max(0, n - 10)
-                        if lower > upper:
-                            lower, upper = upper, lower
-                        pos = random.randint(lower, upper)
-                        st.session_state.practice_queue.insert(pos, st.session_state.current_practice_word)
-
-                        st.session_state.show_answer = False
-                        if len(st.session_state.practice_queue) > 0:
-                            st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-                            st.session_state.practice_display_side = random.choice([0, 1])
-                        else:
-                            st.session_state.current_practice_word = None
-                        st.rerun()
+                with score_col5:
+                    if st.button("0%", disabled=not st.session_state.show_answer, use_container_width=True):
+                        handle_practice_score(0)
 
                 st.write("---")
 
@@ -361,7 +367,6 @@ def main():
         else:
             selected_file_exam = st.selectbox("시험할 파일을 선택하세요", txt_files, key="exam_file_select")
 
-            # ***** 연속 수정 안내: 시험 파트 상단 3버튼 + 시험 개수 입력칸을 가로로 배치했습니다.
             top_col1, top_col2, top_col3, top_col4 = st.columns([1.2, 1.2, 1.2, 1.4], vertical_alignment="bottom")
 
             with top_col1:
@@ -403,7 +408,6 @@ def main():
 
             st.write("")
 
-            # ***** 연속 수정 안내: 시험 방식 선택 버튼 3개를 가로로 만들었습니다.
             mode_col1, mode_col2, mode_col3 = st.columns(3)
 
             with mode_col1:
@@ -421,7 +425,6 @@ def main():
         if st.session_state.current_exam_word is not None:
             st.write("---")
 
-            # ***** 연속 수정 안내: 정답/O/X/현황을 한 줄 인터페이스로 배치했습니다.
             action_col1, action_col2, action_col3, action_col4 = st.columns([1, 1, 1, 2])
 
             with action_col1:
@@ -451,13 +454,10 @@ def main():
 
             st.write("---")
 
-            # ***** 연속 수정 안내: 사용자가 선택한 시험 방식에 맞는 문제/정답을 표시합니다.
             if st.session_state.exam_display_side == 0:
-                # 문제는 단어, 정답은 뜻
                 question_text = st.session_state.current_exam_word['word']
                 answer_text = st.session_state.current_exam_word['meaning']
             else:
-                # 문제는 뜻, 정답은 단어
                 question_text = st.session_state.current_exam_word['meaning']
                 answer_text = st.session_state.current_exam_word['word']
 
@@ -473,7 +473,6 @@ def main():
                 )
 
         elif page == '시험' and not st.session_state.is_examining:
-            # ***** 연속 수정 안내: 시험이 끝난 뒤 결과를 보여줍니다.
             if st.session_state.exam_current_number > 0:
                 total_answered = st.session_state.exam_correct_count + st.session_state.exam_wrong_count
                 if total_answered == st.session_state.exam_total_count:
