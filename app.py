@@ -6,11 +6,6 @@ import base64
 from datetime import datetime
 from urllib.parse import quote
 
-token = str(st.secrets["github_token"]).strip()
-owner = str(st.secrets["github_owner"]).strip()
-repo = str(st.secrets["github_repo"]).strip()
-branch = str(st.secrets["github_branch"]).strip()
-password = str(st.secrets["upload_password"]).strip()
 
 def init_session_state():
     if 'words' not in st.session_state:
@@ -269,27 +264,29 @@ def handle_practice_score(level):
 
 
 def get_github_headers():
+    token = str(st.secrets["github_token"]).strip()
     return {
-        "Authorization": f"Bearer {st.secrets['github_token']}",
+        "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json"
     }
 
 
 def get_repo_info():
-    owner = st.secrets["github_owner"]
-    repo = st.secrets["github_repo"]
-    branch = st.secrets["github_branch"]
+    owner = str(st.secrets["github_owner"]).strip()
+    repo = str(st.secrets["github_repo"]).strip()
+    branch = str(st.secrets["github_branch"]).strip()
     return owner, repo, branch
 
 
 def encode_github_path(path):
-    return quote(path, safe='/')
+    return quote(str(path).strip(), safe='/')
 
 
 def github_get_contents(path):
     owner, repo, branch = get_repo_info()
     encoded_path = encode_github_path(path)
-    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}?ref={branch}"
+    encoded_branch = quote(branch, safe='')
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}?ref={encoded_branch}"
     response = requests.get(url, headers=get_github_headers(), timeout=30)
     return response
 
@@ -356,7 +353,7 @@ def get_local_wordbook_structure(base_folder='word_list'):
 
 def make_safe_filename_part(name):
     invalid_chars = ['\\', '/', ':', '*', '?', '"', '<', '>', '|']
-    safe_name = name.strip()
+    safe_name = str(name).strip()
 
     for ch in invalid_chars:
         safe_name = safe_name.replace(ch, '_')
@@ -370,15 +367,22 @@ def make_safe_filename_part(name):
     return safe_name
 
 
-def make_timestamped_filename(user_title):
-    safe_title = make_safe_filename_part(user_title)
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    return f"{timestamp}_{safe_title}.txt"
+def make_manual_filename_from_title(full_title):
+    safe_title = make_safe_filename_part(full_title)
+
+    if not safe_title.lower().endswith(".txt"):
+        safe_title = f"{safe_title}.txt"
+
+    return safe_title
+
+
+def get_default_manual_title_prefix():
+    return datetime.now().strftime("%Y.%m.%d_%H.%M_")
 
 
 def upload_text_to_github(folder_path, file_name, text_content):
     owner, repo, branch = get_repo_info()
-    repo_path = f"{folder_path}/{file_name}"
+    repo_path = f"{str(folder_path).strip()}/{str(file_name).strip()}"
     encoded_path = encode_github_path(repo_path)
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}"
 
@@ -752,10 +756,10 @@ def render_wordbook_part():
                             st.warning("저장할 정상 단어가 없습니다.")
                         elif errors:
                             st.warning("형식 오류를 먼저 수정한 뒤 저장해 주세요.")
-                        elif upload_password_input != st.secrets["upload_password"]:
+                        elif upload_password_input != str(st.secrets["upload_password"]).strip():
                             st.error("업로드 비밀번호가 올바르지 않습니다.")
                         else:
-                            final_file_name = make_timestamped_filename(upload_title)
+                            final_file_name = make_manual_filename_from_title(upload_title)
                             response, repo_path = upload_text_to_github(selected_folder, final_file_name, uploaded_text)
 
                             if response.status_code in [200, 201]:
@@ -770,8 +774,14 @@ def render_wordbook_part():
     with manual_tab:
         st.subheader("직접 입력해서 저장")
 
+        default_title_prefix = get_default_manual_title_prefix()
+
         with st.form("manual_wordbook_form"):
-            manual_title = st.text_input("저장할 제목을 입력하세요", placeholder="예: 오늘 외운 단어")
+            manual_title = st.text_input(
+                "저장할 제목을 입력하세요",
+                value=default_title_prefix,
+                placeholder="예: 2026.07.17_14.43_일본어 오답"
+            )
             manual_text = st.text_area(
                 "단어장을 입력하세요",
                 height=300,
@@ -798,16 +808,18 @@ def render_wordbook_part():
 
             if not manual_title.strip():
                 st.warning("저장할 제목을 입력해 주세요.")
+            elif manual_title.strip() == default_title_prefix.strip():
+                st.warning("제목 뒤의 자유 내용을 입력해 주세요.")
             elif not manual_text.strip():
                 st.warning("단어장 내용을 입력해 주세요.")
             elif len(parsed_words) == 0:
                 st.warning("저장할 정상 단어가 없습니다.")
             elif errors:
                 st.warning("형식 오류를 먼저 수정한 뒤 다시 저장해 주세요.")
-            elif manual_password_input != st.secrets["upload_password"]:
+            elif manual_password_input != str(st.secrets["upload_password"]).strip():
                 st.error("업로드 비밀번호가 올바르지 않습니다.")
             else:
-                final_file_name = make_timestamped_filename(manual_title)
+                final_file_name = make_manual_filename_from_title(manual_title)
                 response, repo_path = upload_text_to_github(selected_folder, final_file_name, manual_text)
 
                 if response.status_code in [200, 201]:
