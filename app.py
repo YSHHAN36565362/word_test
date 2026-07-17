@@ -21,32 +21,29 @@ def init_session_state():
         st.session_state.is_testing = False
     if 'test_display_side' not in st.session_state:
         st.session_state.test_display_side = 0
+    
+    # ***** 연속 수정 안내: 테스트 시 정답을 확인했는지 기억하는 상태 값을 새로 추가했습니다.
+    if 'show_answer' not in st.session_state:
+        st.session_state.show_answer = False
 
 def load_words_from_file(file_name):
     try:
-        # **** 연속 수정 안내: 이제 file_name에는 'word_list/단어장.txt' 처럼 폴더 경로까지 포함되어 전달됩니다.
         with open(file_name, 'r', encoding='utf-8') as file:
             lines = file.readlines()
         
         parsed_words = []
         i = 0
         
-        # **** 연속 수정 안내: 전체 줄을 하나씩 확인하면서 내려가기 위해 while 반복문을 사용합니다.
         while i < len(lines):
-            # 양 끝 공백이나 줄바꿈을 제거합니다.
             line = lines[i].strip()
             
-            # 빈 줄이면 단어나 뜻이 아니므로 그냥 다음 줄로 넘어갑니다.
             if not line:
                 i += 1
                 continue
             
-            # 이전처럼 전각 콜론을 반각 콜론으로 바꿔주는 기능은 그대로 유지합니다.
             line = line.replace('：', ':')
             
-            # 만약 해당 줄에 콜론(:)이 있다면 기존 방식대로 처리합니다.
             if ':' in line:
-                # 콜론을 기준으로 한 번만 나눕니다.
                 parts = line.split(':', 1)
                 word = parts[0].strip()
                 meaning = parts[1].strip()
@@ -54,23 +51,18 @@ def load_words_from_file(file_name):
                 if word and meaning:
                     parsed_words.append({'word': word, 'meaning': meaning})
                 
-                # 처리가 끝났으므로 다음 줄(1칸 아래)로 이동합니다.
                 i += 1
                 
-            # **** 연속 수정 안내: 콜론이 없다면, 첫 줄을 단어, 그 다음 줄을 의미로 인식하는 새로운 규칙입니다.
             else:
                 word = line
                 meaning = ""
                 
-                # 파일의 마지막 줄이 아니라면, 바로 밑에 있는 줄을 의미로 가져옵니다.
                 if i + 1 < len(lines):
                     meaning = lines[i+1].strip()
                 
                 if word and meaning:
                     parsed_words.append({'word': word, 'meaning': meaning})
                 
-                # 단어(1줄)와 의미(1줄) 총 2줄을 읽었으므로, 다음 읽을 위치를 2칸 뒤로 옮깁니다.
-                # 만약 그 다음 줄이 한 줄 공란이라면, 위쪽의 '빈 줄이면 넘어갑니다' 코드에서 알아서 걸러집니다.
                 i += 2
                 
         return parsed_words
@@ -83,18 +75,14 @@ def main():
     
     st.title("단어 암기 프로그램")
     
-    # 왼쪽에 파트 선택을 만들어주고 사용자가 파트를 선택하면 해당 파트로 이동합니다.
     st.sidebar.title("메뉴")
     page = st.sidebar.radio("파트를 선택하세요", ['학습', '테스트'])
     
-    # **** 연속 수정 안내: 단어장 파일들이 들어있는 폴더 이름을 지정합니다.
     target_folder = 'word_list'
     
-    # **** 연속 수정 안내: 만약 word_list 폴더가 아직 없다면 프로그램이 에러를 내지 않도록 빈 폴더를 알아서 만들어줍니다.
     if not os.path.exists(target_folder):
         os.makedirs(target_folder)
         
-    # **** 연속 수정 안내: 모든 파일이 아닌 target_folder(word_list 폴더) 안에서 .txt로 끝나는 파일들만 가져옵니다.
     txt_files = [f for f in os.listdir(target_folder) if f.endswith('.txt')]
     
     if page == '학습':
@@ -103,18 +91,15 @@ def main():
         if len(txt_files) == 0:
             st.warning(f"'{target_folder}' 폴더에 txt 파일이 없습니다. 깃허브의 {target_folder} 폴더에 txt 파일을 먼저 올려주세요.")
         else:
-            # 학습 파트는 파일을 선택할 수 있게 합니다.
             selected_file = st.selectbox("학습할 텍스트 파일을 선택하세요", txt_files, key="study_file_select")
             
             if st.button("파일 선택하기"):
-                # **** 연속 수정 안내: 파일을 읽을 때 폴더 이름(word_list)과 파일 이름(정보처리기사.txt)을 합쳐서 정확한 경로를 찾아줍니다.
                 file_path = os.path.join(target_folder, selected_file)
                 st.session_state.words = load_words_from_file(file_path)
                 st.session_state.study_index = 0
                 st.session_state.is_studying = False
                 st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
         
-        # 파일에서 단어를 하나라도 불러왔을 때만 아래 버튼과 기능들이 화면에 나타납니다.
         if len(st.session_state.words) > 0:
             if st.button("랜덤으로 섞기"):
                 random.shuffle(st.session_state.words)
@@ -130,15 +115,15 @@ def main():
                 if st.session_state.study_index < len(st.session_state.words):
                     current_word = st.session_state.words[st.session_state.study_index]
                     
-                    # 한 줄씩 기준 좌우 내용을 모두 출력합니다.
-                    st.markdown(f"<div style='font-size: 24px;'>단어: {current_word['word']}</div>", unsafe_allow_html=True)
-                    st.markdown(f"<div style='font-size: 24px;'>의미: {current_word['meaning']}</div>", unsafe_allow_html=True)
-                    
+                    # ***** 연속 수정 안내: '다음' 버튼을 단어와 의미 출력 내용 위로 끌어올렸습니다.
                     if st.button("다음"):
                         st.session_state.study_index += 1
                         st.rerun()
+                    
+                    st.markdown(f"<div style='font-size: 24px;'>단어: {current_word['word']}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size: 24px;'>의미: {current_word['meaning']}</div>", unsafe_allow_html=True)
+                    
                 else:
-                    # 모두 출력하면 해당 문구를 출력합니다.
                     st.success("모두 학습했습니다.")
                     
     elif page == '테스트':
@@ -150,7 +135,6 @@ def main():
             selected_file_test = st.selectbox("파일을 선택하세요.", txt_files, key="test_file_select")
             
             if st.button("파일 선택하기", key="test_load"):
-                # **** 연속 수정 안내: 테스트 파트에서도 동일하게 폴더 경로를 합쳐서 파일을 읽습니다.
                 file_path = os.path.join(target_folder, selected_file_test)
                 st.session_state.words = load_words_from_file(file_path)
                 st.session_state.test_queue = list(st.session_state.words)
@@ -165,6 +149,7 @@ def main():
                 
             if st.button("테스트하기"):
                 st.session_state.is_testing = True
+                st.session_state.show_answer = False # ***** 연속 수정 안내: 테스트 시작 시 정답을 가림 상태로 초기화합니다.
                 if len(st.session_state.test_queue) > 0:
                     st.session_state.current_test_word = st.session_state.test_queue.pop(0)
                     st.session_state.test_display_side = random.choice([0, 1])
@@ -174,41 +159,26 @@ def main():
             if st.session_state.is_testing:
                 st.write("---")
                 if st.session_state.current_test_word is not None:
-                    # 왼쪽이나 오른쪽 내용을 랜덤으로 고릅니다.
-                    if st.session_state.test_display_side == 0:
-                        display_text = st.session_state.current_test_word['word']
-                    else:
-                        display_text = st.session_state.current_test_word['meaning']
                     
-                    # 단어를 보기 편하게 크게 출력합니다.
-                    st.markdown(f"<div style='font-size: 40px; text-align: center; padding: 20px;'>{display_text}</div>", unsafe_allow_html=True)
-                    
-                    # 하단에 3개의 평가 버튼을 나란히 배치합니다.
-                    col1, col2, col3 = st.columns(3)
+                    # ***** 연속 수정 안내: 버튼이 글자 길이에 따라 움직이지 않도록 단어 출력보다 위로 배치했습니다.
+                    # 정답 버튼이 추가되어 4개의 공간(col1~col4)으로 나눴습니다.
+                    col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
-                        if st.button("아는 단어"):
+                        # ***** 연속 수정 안내: 정답 확인 버튼을 아는 단어 버튼의 제일 왼쪽에 추가했습니다.
+                        if st.button("정답"):
+                            st.session_state.show_answer = True
+                            st.rerun()
+                    
+                    with col2:
+                        # ***** 연속 수정 안내: disabled 옵션을 사용하여, 정답 버튼을 누르기 전에는 이 버튼들을 비활성화 상태로 만듭니다.
+                        if st.button("아는 단어", disabled=not st.session_state.show_answer):
                             n = len(st.session_state.test_queue)
-                            # 아래에서 5번째 ~ 10번째 줄로 보냅니다.
                             pos = n - random.randint(5, 10)
                             pos = max(0, pos)
                             st.session_state.test_queue.insert(pos, st.session_state.current_test_word)
                             
-                            if len(st.session_state.test_queue) > 0:
-                                st.session_state.current_test_word = st.session_state.test_queue.pop(0)
-                                st.session_state.test_display_side = random.choice([0, 1])
-                            else:
-                                st.session_state.current_test_word = None
-                            st.rerun()
-                            
-                    with col2:
-                        if st.button("모르는 단어"):
-                            n = len(st.session_state.test_queue)
-                            # 위에서 5번째 ~ 10번째 줄 사이로 보냅니다.
-                            pos = random.randint(5, 10)
-                            pos = min(n, pos)
-                            st.session_state.test_queue.insert(pos, st.session_state.current_test_word)
-                            
+                            st.session_state.show_answer = False # ***** 연속 수정 안내: 다음 단어로 넘어가므로 다시 정답을 가립니다.
                             if len(st.session_state.test_queue) > 0:
                                 st.session_state.current_test_word = st.session_state.test_queue.pop(0)
                                 st.session_state.test_display_side = random.choice([0, 1])
@@ -217,9 +187,23 @@ def main():
                             st.rerun()
                             
                     with col3:
-                        if st.button("헷갈리는 단어"):
+                        if st.button("모르는 단어", disabled=not st.session_state.show_answer):
                             n = len(st.session_state.test_queue)
-                            # 위에서 10번째 줄에서 아래에서 10번째 줄 사이로 보냅니다.
+                            pos = random.randint(5, 10)
+                            pos = min(n, pos)
+                            st.session_state.test_queue.insert(pos, st.session_state.current_test_word)
+                            
+                            st.session_state.show_answer = False
+                            if len(st.session_state.test_queue) > 0:
+                                st.session_state.current_test_word = st.session_state.test_queue.pop(0)
+                                st.session_state.test_display_side = random.choice([0, 1])
+                            else:
+                                st.session_state.current_test_word = None
+                            st.rerun()
+                            
+                    with col4:
+                        if st.button("헷갈리는 단어", disabled=not st.session_state.show_answer):
+                            n = len(st.session_state.test_queue)
                             lower = min(n, 10)
                             upper = max(0, n - 10)
                             if lower > upper:
@@ -227,12 +211,31 @@ def main():
                             pos = random.randint(lower, upper)
                             st.session_state.test_queue.insert(pos, st.session_state.current_test_word)
                             
+                            st.session_state.show_answer = False
                             if len(st.session_state.test_queue) > 0:
                                 st.session_state.current_test_word = st.session_state.test_queue.pop(0)
                                 st.session_state.test_display_side = random.choice([0, 1])
                             else:
                                 st.session_state.current_test_word = None
                             st.rerun()
+                    
+                    st.write("---")
+                    
+                    # ***** 연속 수정 안내: 버튼 아래에 문제로 낼 텍스트와 정답 텍스트를 준비합니다.
+                    if st.session_state.test_display_side == 0:
+                        question_text = st.session_state.current_test_word['word']
+                        answer_text = st.session_state.current_test_word['meaning']
+                    else:
+                        question_text = st.session_state.current_test_word['meaning']
+                        answer_text = st.session_state.current_test_word['word']
+                    
+                    # 문제를 화면 중앙에 크게 출력합니다.
+                    st.markdown(f"<div style='font-size: 40px; text-align: center; padding: 20px;'>문제: {question_text}</div>", unsafe_allow_html=True)
+                    
+                    # ***** 연속 수정 안내: 정답 버튼을 눌렀다면, 문제 아래에 정답 내용도 함께 크게 보여줍니다.
+                    if st.session_state.show_answer:
+                        st.markdown(f"<div style='font-size: 30px; text-align: center; color: gray; padding: 10px;'>정답: {answer_text}</div>", unsafe_allow_html=True)
+                        
                 else:
                     st.success("모든 테스트를 완료했습니다.")
 
