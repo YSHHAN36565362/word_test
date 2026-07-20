@@ -8,21 +8,39 @@ from zoneinfo import ZoneInfo
 
 
 # ---------------------------
+# Page config
+# ---------------------------
+st.set_page_config(
+    page_title="단어 암기 프로그램",
+    page_icon="📚",
+    layout="centered"
+)
+
+
+# ---------------------------
 # Session State
 # ---------------------------
 def init_session_state():
+    """세션 동안 유지할 상태값들을 초기화합니다.
+
+    Streamlit은 위젯을 누를 때마다 스크립트를 다시 실행하므로,
+    학습 진행 상태를 유지하려면 st.session_state에 저장해야 합니다.
+    이 상태는 같은 접속 세션 동안 유지되고, 새로고침/탭 종료 시 초기화됩니다.
+    """
     defaults = {
         "words": [],
         "study_index": 0,
         "is_studying": False,
-        "study_show_hint": False,          # 학습 파트 힌트 표시 상태
+        "study_show_hint": False,
+
         "practice_queue": [],
         "current_practice_word": None,
         "is_practicing": False,
         "practice_display_side": 0,
         "practice_mode": "random",
         "show_answer": False,
-        "practice_show_hint": False,       # 연습 파트 힌트 표시 상태
+        "practice_show_hint": False,
+
         "exam_show_answer": False,
         "exam_queue": [],
         "exam_source_words": [],
@@ -35,6 +53,10 @@ def init_session_state():
         "exam_wrong_count": 0,
         "exam_display_side": 0,
         "exam_total_count_input": 10,
+
+        # 모바일 표시 크기 상태
+        "mobile_font_scale": 1.0,   # 0.9 ~ 1.4
+        "mobile_button_scale": 1.0, # 0.9 ~ 1.4
     }
 
     for key, value in defaults.items():
@@ -43,9 +65,161 @@ def init_session_state():
 
 
 # ---------------------------
+# Mobile accessibility UI
+# ---------------------------
+def increase_mobile_scale():
+    st.session_state.mobile_font_scale = min(1.4, round(st.session_state.mobile_font_scale + 0.1, 1))
+    st.session_state.mobile_button_scale = min(1.4, round(st.session_state.mobile_button_scale + 0.1, 1))
+
+
+def decrease_mobile_scale():
+    st.session_state.mobile_font_scale = max(0.9, round(st.session_state.mobile_font_scale - 0.1, 1))
+    st.session_state.mobile_button_scale = max(0.9, round(st.session_state.mobile_button_scale - 0.1, 1))
+
+
+def reset_mobile_scale():
+    st.session_state.mobile_font_scale = 1.0
+    st.session_state.mobile_button_scale = 1.0
+
+
+def render_mobile_toolbar():
+    """상단 모바일 접근성 도구 막대.
+
+    transform scale 대신 모바일에서만 폰트와 버튼 크기를 키우는 CSS를 사용합니다.
+    이 방식이 레이아웃 깨짐이 적고 더 자연스럽습니다.
+    """
+    font_scale = st.session_state.mobile_font_scale
+    button_scale = st.session_state.mobile_button_scale
+
+    base_font = 16 * font_scale
+    small_font = 14 * font_scale
+    large_font = 24 * font_scale
+    question_font = 40 * font_scale
+    answer_font = 30 * font_scale
+    exam_question_font = 42 * font_scale
+
+    button_height = int(44 * button_scale)
+    button_font = 16 * font_scale
+    input_font = 16 * font_scale
+
+    st.markdown(
+        f"""
+        <style>
+        @media (max-width: 768px) {{
+            .block-container {{
+                padding-top: 0.8rem;
+                padding-left: 0.8rem;
+                padding-right: 0.8rem;
+            }}
+
+            html, body, [data-testid="stAppViewContainer"] {{
+                font-size: {base_font}px !important;
+            }}
+
+            p, li, label, div, span {{
+                font-size: {base_font}px;
+            }}
+
+            .mobile-caption {{
+                font-size: {small_font}px !important;
+                color: #666;
+                margin-bottom: 0.6rem;
+            }}
+
+            .study-word {{
+                font-size: {large_font}px !important;
+            }}
+
+            .practice-question {{
+                font-size: {question_font}px !important;
+                text-align: center;
+                padding: 20px;
+            }}
+
+            .practice-answer {{
+                font-size: {answer_font}px !important;
+                text-align: center;
+                color: gray;
+                padding: 10px;
+            }}
+
+            .exam-question {{
+                font-size: {exam_question_font}px !important;
+                text-align: center;
+                padding: 28px;
+            }}
+
+            .exam-answer {{
+                font-size: {answer_font}px !important;
+                text-align: center;
+                color: gray;
+                padding: 12px;
+            }}
+
+            div[data-testid="stButton"] > button,
+            .stFormSubmitButton > button {{
+                min-height: {button_height}px !important;
+                font-size: {button_font}px !important;
+                font-weight: 600 !important;
+                border-radius: 10px !important;
+            }}
+
+            .stFormSubmitButton > button p {{
+                font-size: {button_font}px !important;
+            }}
+
+            div[data-baseweb="select"] * {{
+                font-size: {input_font}px !important;
+            }}
+
+            input, textarea, [data-testid="stNumberInput"] input {{
+                font-size: {input_font}px !important;
+            }}
+
+            [data-testid="stSidebar"] * {{
+                font-size: {small_font}px !important;
+            }}
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    top1, top2, top3, top4 = st.columns([1, 1, 1, 2])
+    with top1:
+        st.button("글자 크게", on_click=increase_mobile_scale, use_container_width=True)
+    with top2:
+        st.button("글자 작게", on_click=decrease_mobile_scale, use_container_width=True)
+    with top3:
+        st.button("기본 크기", on_click=reset_mobile_scale, use_container_width=True)
+    with top4:
+        st.caption(
+            f"모바일 크기: 글자 {int(font_scale * 100)}% / 버튼 {int(button_scale * 100)}%"
+        )
+
+    st.markdown(
+        "<div class='mobile-caption'>모바일에서 글씨나 버튼이 작게 보이면 위 버튼으로 조절하세요.</div>",
+        unsafe_allow_html=True
+    )
+
+
+# ---------------------------
 # Word parsing
 # ---------------------------
 def parse_word_text(text):
+    """빈 줄 기준 블록 파싱.
+
+    지원 형식 1)
+    단어
+    뜻
+    힌트 1
+    힌트 2
+
+    지원 형식 2)
+    단어: 뜻
+    힌트 1
+    힌트 2
+    """
     normalized_text = text.replace("\r\n", "\n").replace("：", ":")
     lines = normalized_text.split("\n")
 
@@ -53,42 +227,50 @@ def parse_word_text(text):
     i = 0
 
     while i < len(lines):
-        # 공백 줄 건너뛰기
         while i < len(lines) and not lines[i].strip():
             i += 1
-        
+
         if i >= len(lines):
             break
-            
-        # 연속된 줄을 하나의 블록(단어 한 세트)으로 묶기
+
         block = []
         while i < len(lines) and lines[i].strip():
             block.append(lines[i].strip())
             i += 1
-            
+
         if not block:
             continue
-            
-        # 블록 파싱 처리
+
         if ":" in block[0]:
             parts = block[0].split(":", 1)
             word = parts[0].strip()
             meaning = parts[1].strip()
             hint = "\n".join(block[1:]) if len(block) > 1 else ""
+
             if word and meaning:
-                parsed_words.append({"word": word, "meaning": meaning, "hint": hint})
+                parsed_words.append({
+                    "word": word,
+                    "meaning": meaning,
+                    "hint": hint
+                })
         else:
             if len(block) >= 2:
                 word = block[0]
                 meaning = block[1]
                 hint = "\n".join(block[2:])
+
                 if word and meaning:
-                    parsed_words.append({"word": word, "meaning": meaning, "hint": hint})
+                    parsed_words.append({
+                        "word": word,
+                        "meaning": meaning,
+                        "hint": hint
+                    })
 
     return parsed_words
 
 
 def parse_words_with_validation(text):
+    """단어장 업로드/저장 전 형식 검사용 파서입니다."""
     normalized_text = text.replace("\r\n", "\n").replace("：", ":")
     lines = normalized_text.split("\n")
 
@@ -97,19 +279,19 @@ def parse_words_with_validation(text):
     i = 0
 
     while i < len(lines):
-        start_line_idx = i
         while i < len(lines) and not lines[i].strip():
             i += 1
-        
+
         if i >= len(lines):
             break
-            
+
         block_start = i
         block = []
+
         while i < len(lines) and lines[i].strip():
             block.append(lines[i].strip())
             i += 1
-            
+
         if not block:
             continue
 
@@ -126,7 +308,11 @@ def parse_words_with_validation(text):
             elif not meaning:
                 errors.append(f"{block_start + 1}번 줄: 뜻이 비어 있습니다.")
             else:
-                parsed_words.append({"word": word, "meaning": meaning, "hint": hint})
+                parsed_words.append({
+                    "word": word,
+                    "meaning": meaning,
+                    "hint": hint
+                })
         else:
             if len(block) == 1:
                 errors.append(f"{block_start + 1}번 줄: 뜻이 없는 단어입니다.")
@@ -134,13 +320,17 @@ def parse_words_with_validation(text):
                 word = block[0]
                 meaning = block[1]
                 hint = "\n".join(block[2:])
-                
+
                 if not word:
                     errors.append(f"{block_start + 1}번 줄: 단어가 비어 있습니다.")
                 elif not meaning:
                     errors.append(f"{block_start + 2}번 줄: 뜻이 비어 있습니다.")
                 else:
-                    parsed_words.append({"word": word, "meaning": meaning, "hint": hint})
+                    parsed_words.append({
+                        "word": word,
+                        "meaning": meaning,
+                        "hint": hint
+                    })
 
     return parsed_words, errors
 
@@ -203,8 +393,13 @@ def encode_github_path(path):
     return quote(str(path).strip(), safe="/")
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=120, max_entries=256, show_spinner=False)
 def github_get_contents_cached(path):
+    """GitHub contents API 응답 캐시.
+
+    반복적인 폴더/파일 조회를 줄여서 여러 사용자가 접속해도
+    불필요한 API 호출이 많아지지 않도록 합니다.
+    """
     owner, repo, branch = get_repo_info()
     encoded_path = encode_github_path(path)
     encoded_branch = quote(branch, safe="")
@@ -213,7 +408,7 @@ def github_get_contents_cached(path):
     return response.status_code, response.json() if response.content else {}
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=120, max_entries=64, show_spinner=False)
 def get_github_all_folders_recursive(base_path="word_list"):
     collected = []
 
@@ -237,7 +432,7 @@ def get_github_all_folders_recursive(base_path="word_list"):
     return collected
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=120, max_entries=64, show_spinner=False)
 def get_github_folders(base_path="word_list"):
     try:
         folders = get_github_all_folders_recursive(base_path)
@@ -246,7 +441,7 @@ def get_github_folders(base_path="word_list"):
         return [], f"GitHub 폴더 목록 조회 중 오류가 발생했습니다: {e}"
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=120, max_entries=256, show_spinner=False)
 def get_github_txt_files(folder_path):
     try:
         status_code, data = github_get_contents_cached(folder_path)
@@ -267,7 +462,7 @@ def get_github_txt_files(folder_path):
         return [], f"파일 목록 조회 중 오류가 발생했습니다: {e}"
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=120, max_entries=512, show_spinner=False)
 def get_github_file_text(repo_file_path):
     status_code, data = github_get_contents_cached(repo_file_path)
 
@@ -304,9 +499,39 @@ def upload_text_to_github(folder_path, file_name, text_content):
 
 
 # ---------------------------
-# Study / Practice / Exam logic
+# State helpers
 # ---------------------------
+def load_first_practice_word():
+    """연습 시작 시 첫 문제를 가져옵니다."""
+    if len(st.session_state.practice_queue) > 0:
+        st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
+        set_next_practice_display_side()
+    else:
+        st.session_state.current_practice_word = None
+
+
+def start_practice(mode):
+    """연습 시작 공통 함수.
+
+    중복 로직을 줄여 유지보수를 쉽게 합니다.
+    """
+    if len(st.session_state.words) == 0:
+        st.warning("먼저 파일을 선택해 주세요.")
+        return
+
+    st.session_state.practice_mode = mode
+
+    if len(st.session_state.practice_queue) == 0:
+        st.session_state.practice_queue = list(st.session_state.words)
+
+    st.session_state.is_practicing = True
+    st.session_state.show_answer = False
+    st.session_state.practice_show_hint = False
+    load_first_practice_word()
+
+
 def reset_exam_state():
+    """시험 상태 초기화."""
     st.session_state.is_examining = False
     st.session_state.exam_mode = None
     st.session_state.exam_queue = []
@@ -318,6 +543,9 @@ def reset_exam_state():
     st.session_state.exam_display_side = 0
 
 
+# ---------------------------
+# Study / Practice / Exam logic
+# ---------------------------
 def load_next_exam_question():
     if len(st.session_state.exam_queue) > 0:
         st.session_state.current_exam_word = st.session_state.exam_queue.pop(0)
@@ -373,8 +601,9 @@ def set_next_practice_display_side():
 
 
 def move_to_next_practice_word():
+    """현재 문제를 처리한 뒤 다음 문제로 이동합니다."""
     st.session_state.show_answer = False
-    st.session_state.practice_show_hint = False   # 힌트 닫기
+    st.session_state.practice_show_hint = False
 
     if len(st.session_state.practice_queue) > 0:
         st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
@@ -400,6 +629,7 @@ def get_random_position_by_percent(n, start_ratio, end_ratio):
 
 
 def handle_practice_score(level):
+    """연습 평가 결과에 따라 단어를 큐 뒤쪽 적절한 위치에 재삽입합니다."""
     current_word = st.session_state.current_practice_word
     if current_word is None:
         return
@@ -490,28 +720,36 @@ def render_study_part():
 
     if len(st.session_state.words) > 0 and st.session_state.is_studying:
         st.write("---")
+
         if st.session_state.study_index < len(st.session_state.words):
             current_word = st.session_state.words[st.session_state.study_index]
+            has_hint = bool(current_word.get("hint", "").strip())
 
             col_btn1, col_btn2 = st.columns(2)
+
             with col_btn1:
                 if st.button("다음", key="study_next_btn", use_container_width=True):
                     st.session_state.study_index += 1
-                    st.session_state.study_show_hint = False  # 다음으로 넘어갈 때 힌트 가림
-                    st.rerun()
+                    st.session_state.study_show_hint = False
+
             with col_btn2:
-                if st.button("힌트 보기", key="study_hint_btn", use_container_width=True):
+                if st.button("힌트 보기", key="study_hint_btn", use_container_width=True, disabled=not has_hint):
                     st.session_state.study_show_hint = True
 
-            # 인덱스 변경 후 유효성 검사 다시 진행
             if st.session_state.study_index < len(st.session_state.words):
                 current_word = st.session_state.words[st.session_state.study_index]
-                st.markdown(f"<div style='font-size: 24px;'>단어: {current_word['word']}</div>", unsafe_allow_html=True)
-                st.markdown(f"<div style='font-size: 24px;'>의미: {current_word['meaning']}</div>", unsafe_allow_html=True)
-                
-                # 힌트가 있고 힌트 보기 상태일 때 출력
-                if st.session_state.study_show_hint and current_word.get("hint"):
-                    st.info(f"힌트: {current_word['hint']}")
+
+                st.markdown(
+                    f"<div class='study-word'>단어: {current_word['word']}</div>",
+                    unsafe_allow_html=True
+                )
+                st.markdown(
+                    f"<div class='study-word'>의미: {current_word['meaning']}</div>",
+                    unsafe_allow_html=True
+                )
+
+                if st.session_state.study_show_hint and current_word.get("hint", "").strip():
+                    st.info(f"힌트:\n{current_word['hint']}")
             else:
                 st.success("모두 학습했습니다.")
         else:
@@ -576,7 +814,9 @@ def render_practice_part():
     with col3:
         if st.button("연습 준비", use_container_width=True):
             if len(st.session_state.words) > 0:
-                st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
+                if len(st.session_state.practice_queue) == 0:
+                    st.session_state.practice_queue = list(st.session_state.words)
+
                 st.session_state.is_practicing = False
                 st.session_state.current_practice_word = None
                 st.session_state.show_answer = False
@@ -590,56 +830,21 @@ def render_practice_part():
 
     with mode_col1:
         if st.button("단어 이름만 연습하기", use_container_width=True):
-            if len(st.session_state.words) > 0:
-                st.session_state.practice_mode = "word_only"
-                st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
-                st.session_state.is_practicing = True
-                st.session_state.show_answer = False
-                st.session_state.practice_show_hint = False
-                if len(st.session_state.practice_queue) > 0:
-                    st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-                    set_next_practice_display_side()
-                else:
-                    st.session_state.current_practice_word = None
-            else:
-                st.warning("먼저 파일을 선택해 주세요.")
+            start_practice("word_only")
 
     with mode_col2:
         if st.button("단어 뜻만 연습하기", use_container_width=True):
-            if len(st.session_state.words) > 0:
-                st.session_state.practice_mode = "meaning_only"
-                st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
-                st.session_state.is_practicing = True
-                st.session_state.show_answer = False
-                st.session_state.practice_show_hint = False
-                if len(st.session_state.practice_queue) > 0:
-                    st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-                    set_next_practice_display_side()
-                else:
-                    st.session_state.current_practice_word = None
-            else:
-                st.warning("먼저 파일을 선택해 주세요.")
+            start_practice("meaning_only")
 
     with mode_col3:
         if st.button("랜덤으로 연습하기", use_container_width=True):
-            if len(st.session_state.words) > 0:
-                st.session_state.practice_mode = "random"
-                st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
-                st.session_state.is_practicing = True
-                st.session_state.show_answer = False
-                st.session_state.practice_show_hint = False
-                if len(st.session_state.practice_queue) > 0:
-                    st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-                    set_next_practice_display_side()
-                else:
-                    st.session_state.current_practice_word = None
-            else:
-                st.warning("먼저 파일을 선택해 주세요.")
+            start_practice("random")
 
     if st.session_state.is_practicing:
         st.write("---")
+
         if st.session_state.current_practice_word is not None:
-            # 힌트 버튼 추가를 위해 6개 컬럼으로 분할
+            has_hint = bool(st.session_state.current_practice_word.get("hint", "").strip())
             score_col1, hint_col, score_col2, score_col3, score_col4, score_col5 = st.columns(6)
 
             with score_col1:
@@ -647,11 +852,10 @@ def render_practice_part():
                     st.session_state.show_answer = True
 
             with hint_col:
-                if st.button("힌트 보기", use_container_width=True):
+                if st.button("힌트 보기", use_container_width=True, disabled=not has_hint):
                     st.session_state.practice_show_hint = True
 
             with score_col2:
-                # 정답을 확인해야만 버튼 활성화
                 if st.button("100%", disabled=not st.session_state.show_answer, use_container_width=True):
                     handle_practice_score(100)
 
@@ -678,17 +882,16 @@ def render_practice_part():
                     answer_text = st.session_state.current_practice_word["word"]
 
                 st.markdown(
-                    f"<div style='font-size: 40px; text-align: center; padding: 20px;'>문제: {question_text}</div>",
+                    f"<div class='practice-question'>문제: {question_text}</div>",
                     unsafe_allow_html=True
                 )
 
-                # 힌트 보기 상태일 때 출력
-                if st.session_state.practice_show_hint and st.session_state.current_practice_word.get("hint"):
-                    st.info(f"힌트: {st.session_state.current_practice_word['hint']}")
+                if st.session_state.practice_show_hint and has_hint:
+                    st.info(f"힌트:\n{st.session_state.current_practice_word['hint']}")
 
                 if st.session_state.show_answer:
                     st.markdown(
-                        f"<div style='font-size: 30px; text-align: center; color: gray; padding: 10px;'>정답: {answer_text}</div>",
+                        f"<div class='practice-answer'>정답: {answer_text}</div>",
                         unsafe_allow_html=True
                     )
             else:
@@ -834,19 +1037,20 @@ def render_exam_part():
                 answer_text = st.session_state.current_exam_word["word"]
 
             st.markdown(
-                f"<div style='font-size: 42px; text-align: center; padding: 28px;'>문제: {question_text}</div>",
+                f"<div class='exam-question'>문제: {question_text}</div>",
                 unsafe_allow_html=True
             )
 
             if st.session_state.exam_show_answer:
                 st.markdown(
-                    f"<div style='font-size: 30px; text-align: center; color: gray; padding: 12px;'>정답: {answer_text}</div>",
+                    f"<div class='exam-answer'>정답: {answer_text}</div>",
                     unsafe_allow_html=True
                 )
         else:
             st.success(
                 f"시험이 완료되었습니다. 맞음 {st.session_state.exam_correct_count}개, 틀림 {st.session_state.exam_wrong_count}개입니다."
             )
+
     elif not st.session_state.is_examining:
         if st.session_state.exam_current_number > 0:
             total_answered = st.session_state.exam_correct_count + st.session_state.exam_wrong_count
@@ -860,7 +1064,8 @@ def render_wordbook_part():
     st.header("단어장 파트")
     st.caption("사용자는 직접 txt 파일을 업로드하거나 내용을 입력해 새 단어장을 만들 수 있습니다. 삭제는 GitHub 관리자만 할 수 있습니다.")
 
-    top_left, top_right = st.columns([5, 1])
+    _, top_right = st.columns([5, 1])
+
     with top_right:
         if st.button("새로고침", use_container_width=True):
             clear_github_cache()
@@ -877,7 +1082,6 @@ def render_wordbook_part():
         return
 
     selected_folder = st.selectbox("저장할 폴더를 선택하세요", folders, key="wordbook_folder_select")
-
     existing_files, files_error = get_github_txt_files(selected_folder)
 
     st.write("### 현재 폴더의 기존 txt 파일 목록")
@@ -1019,8 +1223,10 @@ def render_wordbook_part():
 # ---------------------------
 def main():
     init_session_state()
+    render_mobile_toolbar()
 
     st.title("단어 암기 프로그램")
+    st.caption("세션이 유지되는 동안 학습/연습/시험 진행 상태가 유지됩니다. 브라우저 새로고침이나 탭 종료 시에는 초기화됩니다.")
 
     st.sidebar.title("메뉴")
     page = st.sidebar.radio("파트를 선택하세요", ["학습", "연습", "시험", "단어장"])
