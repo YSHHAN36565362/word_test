@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 # ---------------------------
 st.set_page_config(
     page_title="단어 암기 프로그램",
-    page_icon="📚",
+    page_icon="",
     layout="centered"
 )
 
@@ -407,12 +407,12 @@ def render_study_part():
             st.write("---")
             c1, c2 = st.columns(2)
             with c1:
-                if st.button("다음 단어 ⏭️", use_container_width=True):
+                if st.button("다음 단어", use_container_width=True):
                     st.session_state.study_index += 1
                     st.session_state.study_show_hint = False
                     st.rerun()
             with c2:
-                if st.button("힌트 보기 💡", use_container_width=True, disabled=not has_hint):
+                if st.button("힌트 보기", use_container_width=True, disabled=not has_hint):
                     st.session_state.study_show_hint = True
                     st.rerun()
                     
@@ -464,11 +464,11 @@ def render_practice_part():
         st.write("---")
         btn1, btn2 = st.columns(2)
         with btn1:
-            if st.button("정답 확인 👁️", use_container_width=True):
+            if st.button("정답 확인", use_container_width=True):
                 st.session_state.practice_show_answer = True
                 st.rerun()
         with btn2:
-            if st.button("힌트 보기 💡", use_container_width=True, disabled=not has_hint):
+            if st.button("힌트 보기", use_container_width=True, disabled=not has_hint):
                 st.session_state.practice_show_hint = True
                 st.rerun()
                 
