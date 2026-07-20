@@ -72,16 +72,17 @@ def init_session_state():
         "calendar_month_exam": now.month,
         "calendar_selected_dates_exam": [],
 
-        "word_order_study": "랜덤",
-        "word_order_practice": "랜덤",
-        "word_order_exam": "랜덤",
+        "study_japanese_mode": "단일 등급",
+        "practice_japanese_mode": "단일 등급",
+        "exam_japanese_mode": "단일 등급",
 
-        "study_folder_list": [],
-        "study_main_category": "IT",
-        "practice_folder_list": [],
-        "practice_main_category": "IT",
-        "exam_folder_list": [],
-        "exam_main_category": "IT",
+        "study_japanese_level_single": "N2",
+        "practice_japanese_level_single": "N2",
+        "exam_japanese_level_single": "N2",
+
+        "study_japanese_level_multi": ["N2", "N3", "N4~N5"],
+        "practice_japanese_level_multi": ["N2", "N3", "N4~N5"],
+        "exam_japanese_level_multi": ["N2", "N3", "N4~N5"],
     }
 
     for key, value in defaults.items():
@@ -131,15 +132,15 @@ def keep_session_keys():
         "calendar_year_exam",
         "calendar_month_exam",
         "calendar_selected_dates_exam",
-        "word_order_study",
-        "word_order_practice",
-        "word_order_exam",
-        "study_folder_list",
-        "study_main_category",
-        "practice_folder_list",
-        "practice_main_category",
-        "exam_folder_list",
-        "exam_main_category",
+        "study_japanese_mode",
+        "practice_japanese_mode",
+        "exam_japanese_mode",
+        "study_japanese_level_single",
+        "practice_japanese_level_single",
+        "exam_japanese_level_single",
+        "study_japanese_level_multi",
+        "practice_japanese_level_multi",
+        "exam_japanese_level_multi",
     ]
 
     for key in protected_keys:
@@ -630,7 +631,7 @@ def render_folder_picker(prefix):
     main_category = st.selectbox(
         "대분류 선택",
         get_main_category_options(),
-        key=f"{prefix}_main_category"
+        key=f"{prefix}_main_category_widget"
     )
 
     folder_list = []
@@ -655,13 +656,10 @@ def render_folder_picker(prefix):
             selected_levels = st.multiselect(
                 "여러 등급 폴더 선택",
                 options=get_japanese_level_options(),
-                default=get_japanese_level_options(),
+                default=st.session_state[f"{prefix}_japanese_level_multi"],
                 key=f"{prefix}_japanese_level_multi"
             )
             folder_list = [f"word_list/Japanese/{lv}" for lv in selected_levels]
-
-    st.session_state[f"{prefix}_folder_list"] = folder_list
-    st.session_state[f"{prefix}_main_category"] = main_category
 
     if folder_list:
         st.caption("선택된 폴더")
@@ -897,17 +895,14 @@ def render_file_selector_section(folder_list, prefix, main_category):
                 if st.button("이번 주", key=f"{prefix}_quick_this_week", use_container_width=True):
                     apply_quick_date_selection(prefix, dated_labels, label_to_item, "this_week")
                     st.rerun()
-
             with q2:
                 if st.button("지난 주", key=f"{prefix}_quick_last_week", use_container_width=True):
                     apply_quick_date_selection(prefix, dated_labels, label_to_item, "last_week")
                     st.rerun()
-
             with q3:
                 if st.button("이번 달", key=f"{prefix}_quick_this_month", use_container_width=True):
                     apply_quick_date_selection(prefix, dated_labels, label_to_item, "this_month")
                     st.rerun()
-
             with q4:
                 if st.button("빠른 선택 해제", key=f"{prefix}_quick_clear", use_container_width=True):
                     remove_labels(prefix, dated_labels)
@@ -1113,19 +1108,20 @@ def handle_practice_score(level):
 def load_and_start_study(selected_items):
     if not selected_items:
         st.warning("먼저 파일을 하나 이상 선택해 주세요.")
-        return
+        return False
 
     loaded = load_words_from_multiple_github_files(selected_items)
     save_loaded_words(loaded)
     st.session_state.study_index = 0
     st.session_state.is_studying = True
     st.session_state.study_show_hint = False
+    return True
 
 
 def load_and_start_practice(selected_items, mode):
     if not selected_items:
         st.warning("먼저 파일을 하나 이상 선택해 주세요.")
-        return
+        return False
 
     loaded = load_words_from_multiple_github_files(selected_items)
     save_loaded_words(loaded)
@@ -1136,12 +1132,13 @@ def load_and_start_practice(selected_items, mode):
     st.session_state.show_answer = False
     st.session_state.practice_show_hint = False
     start_practice(mode)
+    return True
 
 
 def load_and_start_exam(selected_items, mode):
     if not selected_items:
         st.warning("먼저 파일을 하나 이상 선택해 주세요.")
-        return
+        return False
 
     loaded_words = load_words_from_multiple_github_files(selected_items)
     save_loaded_words(loaded_words)
@@ -1152,6 +1149,7 @@ def load_and_start_exam(selected_items, mode):
         st.session_state.exam_total_count_input
     )
     start_exam(mode)
+    return True
 
 
 # ---------------------------
@@ -1164,13 +1162,6 @@ def render_study_part():
     card_container = st.container()
     under_card_container = st.container()
     selector_container = st.container()
-
-    selected_items = []
-
-    with selector_container:
-        folder_list, main_category = render_folder_picker("study")
-        if folder_list:
-            selected_items = render_file_selector_section(folder_list, "study", main_category)
 
     with top_controls:
         c1, c2 = st.columns(2)
@@ -1192,7 +1183,6 @@ def render_study_part():
     with card_container:
         if len(st.session_state.words) > 0 and st.session_state.is_studying and st.session_state.study_index < len(st.session_state.words):
             current_word = st.session_state.words[st.session_state.study_index]
-
             st.markdown(f"<div class='study-word'>단어: {current_word['word']}</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='study-word'>의미: {current_word['meaning']}</div>", unsafe_allow_html=True)
 
@@ -1207,9 +1197,15 @@ def render_study_part():
         render_under_card_view_controls("study")
 
     with selector_container:
+        folder_list, main_category = render_folder_picker("study")
+        selected_items = []
+        if folder_list:
+            selected_items = render_file_selector_section(folder_list, "study", main_category)
+
         if st.button("학습하기", key="study_start_only_btn", use_container_width=True):
-            load_and_start_study(selected_items)
-            st.rerun()
+            ok = load_and_start_study(selected_items)
+            if ok:
+                st.rerun()
 
 
 def render_practice_part():
@@ -1218,8 +1214,6 @@ def render_practice_part():
     card_container = st.container()
     under_card_container = st.container()
     selector_container = st.container()
-
-    selected_items = []
 
     with card_container:
         if st.session_state.is_practicing and st.session_state.current_practice_word is not None:
@@ -1281,22 +1275,26 @@ def render_practice_part():
 
     with selector_container:
         folder_list, main_category = render_folder_picker("practice")
+        selected_items = []
         if folder_list:
             selected_items = render_file_selector_section(folder_list, "practice", main_category)
 
         m1, m2, m3 = st.columns(3)
         with m1:
             if st.button("단어 이름만 연습하기", key="practice_word_only_btn", use_container_width=True):
-                load_and_start_practice(selected_items, "word_only")
-                st.rerun()
+                ok = load_and_start_practice(selected_items, "word_only")
+                if ok:
+                    st.rerun()
         with m2:
             if st.button("단어 뜻만 연습하기", key="practice_meaning_only_btn", use_container_width=True):
-                load_and_start_practice(selected_items, "meaning_only")
-                st.rerun()
+                ok = load_and_start_practice(selected_items, "meaning_only")
+                if ok:
+                    st.rerun()
         with m3:
             if st.button("랜덤으로 연습하기", key="practice_random_btn", use_container_width=True):
-                load_and_start_practice(selected_items, "random")
-                st.rerun()
+                ok = load_and_start_practice(selected_items, "random")
+                if ok:
+                    st.rerun()
 
 
 def render_exam_part():
@@ -1305,8 +1303,6 @@ def render_exam_part():
     card_container = st.container()
     under_card_container = st.container()
     selector_container = st.container()
-
-    selected_items = []
 
     with card_container:
         if st.session_state.current_exam_word is not None:
@@ -1362,6 +1358,7 @@ def render_exam_part():
 
     with selector_container:
         folder_list, main_category = render_folder_picker("exam")
+        selected_items = []
         if folder_list:
             selected_items = render_file_selector_section(folder_list, "exam", main_category)
 
@@ -1389,16 +1386,19 @@ def render_exam_part():
         m1, m2, m3 = st.columns(3)
         with m1:
             if st.button("단어 이름만 시험 보기", key="exam_word_only_btn", use_container_width=True):
-                load_and_start_exam(selected_items, "word_only")
-                st.rerun()
+                ok = load_and_start_exam(selected_items, "word_only")
+                if ok:
+                    st.rerun()
         with m2:
             if st.button("단어 뜻만 시험 보기", key="exam_meaning_only_btn", use_container_width=True):
-                load_and_start_exam(selected_items, "meaning_only")
-                st.rerun()
+                ok = load_and_start_exam(selected_items, "meaning_only")
+                if ok:
+                    st.rerun()
         with m3:
             if st.button("랜덤으로 시험 보기", key="exam_random_btn", use_container_width=True):
-                load_and_start_exam(selected_items, "random")
-                st.rerun()
+                ok = load_and_start_exam(selected_items, "random")
+                if ok:
+                    st.rerun()
 
 
 def render_wordbook_part():
