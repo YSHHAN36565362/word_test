@@ -15,12 +15,14 @@ def init_session_state():
         "words": [],
         "study_index": 0,
         "is_studying": False,
+        "study_show_hint": False,          # 학습 파트 힌트 표시 상태
         "practice_queue": [],
         "current_practice_word": None,
         "is_practicing": False,
         "practice_display_side": 0,
         "practice_mode": "random",
         "show_answer": False,
+        "practice_show_hint": False,       # 연습 파트 힌트 표시 상태
         "exam_show_answer": False,
         "exam_queue": [],
         "exam_source_words": [],
@@ -51,34 +53,37 @@ def parse_word_text(text):
     i = 0
 
     while i < len(lines):
-        line = lines[i].strip()
-
-        if not line:
+        # 공백 줄 건너뛰기
+        while i < len(lines) and not lines[i].strip():
             i += 1
+        
+        if i >= len(lines):
+            break
+            
+        # 연속된 줄을 하나의 블록(단어 한 세트)으로 묶기
+        block = []
+        while i < len(lines) and lines[i].strip():
+            block.append(lines[i].strip())
+            i += 1
+            
+        if not block:
             continue
-
-        if ":" in line:
-            parts = line.split(":", 1)
+            
+        # 블록 파싱 처리
+        if ":" in block[0]:
+            parts = block[0].split(":", 1)
             word = parts[0].strip()
             meaning = parts[1].strip()
+            hint = "\n".join(block[1:]) if len(block) > 1 else ""
             if word and meaning:
-                parsed_words.append({"word": word, "meaning": meaning})
-            i += 1
+                parsed_words.append({"word": word, "meaning": meaning, "hint": hint})
         else:
-            word = line
-            meaning = ""
-            next_index = i + 1
-
-            while next_index < len(lines) and not lines[next_index].strip():
-                next_index += 1
-
-            if next_index < len(lines):
-                meaning = lines[next_index].strip()
-
-            if word and meaning:
-                parsed_words.append({"word": word, "meaning": meaning})
-
-            i = next_index + 1
+            if len(block) >= 2:
+                word = block[0]
+                meaning = block[1]
+                hint = "\n".join(block[2:])
+                if word and meaning:
+                    parsed_words.append({"word": word, "meaning": meaning, "hint": hint})
 
     return parsed_words
 
@@ -92,50 +97,50 @@ def parse_words_with_validation(text):
     i = 0
 
     while i < len(lines):
-        raw_line = lines[i]
-        line = raw_line.strip()
-
-        if not line:
+        start_line_idx = i
+        while i < len(lines) and not lines[i].strip():
             i += 1
+        
+        if i >= len(lines):
+            break
+            
+        block_start = i
+        block = []
+        while i < len(lines) and lines[i].strip():
+            block.append(lines[i].strip())
+            i += 1
+            
+        if not block:
             continue
 
-        if ":" in line:
-            parts = line.split(":", 1)
+        if ":" in block[0]:
+            parts = block[0].split(":", 1)
             word = parts[0].strip()
             meaning = parts[1].strip()
+            hint = "\n".join(block[1:]) if len(block) > 1 else ""
 
             if not word and not meaning:
-                errors.append(f"{i + 1}번 줄: 단어와 뜻이 모두 비어 있습니다.")
+                errors.append(f"{block_start + 1}번 줄: 단어와 뜻이 모두 비어 있습니다.")
             elif not word:
-                errors.append(f"{i + 1}번 줄: 단어가 비어 있습니다.")
+                errors.append(f"{block_start + 1}번 줄: 단어가 비어 있습니다.")
             elif not meaning:
-                errors.append(f"{i + 1}번 줄: 뜻이 비어 있습니다.")
+                errors.append(f"{block_start + 1}번 줄: 뜻이 비어 있습니다.")
             else:
-                parsed_words.append({"word": word, "meaning": meaning})
-
-            i += 1
+                parsed_words.append({"word": word, "meaning": meaning, "hint": hint})
         else:
-            word = line
-            next_index = i + 1
-
-            while next_index < len(lines) and not lines[next_index].strip():
-                next_index += 1
-
-            if next_index >= len(lines):
-                errors.append(f"{i + 1}번 줄: 뜻이 없는 단어입니다.")
-                i += 1
-                continue
-
-            meaning = lines[next_index].strip()
-
-            if not word:
-                errors.append(f"{i + 1}번 줄: 단어가 비어 있습니다.")
-            elif not meaning:
-                errors.append(f"{next_index + 1}번 줄: 뜻이 비어 있습니다.")
+            if len(block) == 1:
+                errors.append(f"{block_start + 1}번 줄: 뜻이 없는 단어입니다.")
             else:
-                parsed_words.append({"word": word, "meaning": meaning})
-
-            i = next_index + 1
+                word = block[0]
+                meaning = block[1]
+                hint = "\n".join(block[2:])
+                
+                if not word:
+                    errors.append(f"{block_start + 1}번 줄: 단어가 비어 있습니다.")
+                elif not meaning:
+                    errors.append(f"{block_start + 2}번 줄: 뜻이 비어 있습니다.")
+                else:
+                    parsed_words.append({"word": word, "meaning": meaning, "hint": hint})
 
     return parsed_words, errors
 
@@ -369,6 +374,7 @@ def set_next_practice_display_side():
 
 def move_to_next_practice_word():
     st.session_state.show_answer = False
+    st.session_state.practice_show_hint = False   # 힌트 닫기
 
     if len(st.session_state.practice_queue) > 0:
         st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
@@ -458,6 +464,7 @@ def render_study_part():
                 st.session_state.words = load_words_from_github_file(selected_folder, selected_file)
                 st.session_state.study_index = 0
                 st.session_state.is_studying = False
+                st.session_state.study_show_hint = False
                 st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
             except Exception as e:
                 st.error(f"파일 선택 중 오류가 발생했습니다: {e}")
@@ -467,6 +474,7 @@ def render_study_part():
             if len(st.session_state.words) > 0:
                 random.shuffle(st.session_state.words)
                 st.session_state.study_index = 0
+                st.session_state.study_show_hint = False
                 st.success("단어 목록이 랜덤으로 섞였습니다!")
             else:
                 st.warning("먼저 파일을 선택해 주세요.")
@@ -476,6 +484,7 @@ def render_study_part():
             if len(st.session_state.words) > 0:
                 st.session_state.is_studying = True
                 st.session_state.study_index = 0
+                st.session_state.study_show_hint = False
             else:
                 st.warning("먼저 파일을 선택해 주세요.")
 
@@ -484,13 +493,25 @@ def render_study_part():
         if st.session_state.study_index < len(st.session_state.words):
             current_word = st.session_state.words[st.session_state.study_index]
 
-            if st.button("다음", key="study_next_btn"):
-                st.session_state.study_index += 1
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                if st.button("다음", key="study_next_btn", use_container_width=True):
+                    st.session_state.study_index += 1
+                    st.session_state.study_show_hint = False  # 다음으로 넘어갈 때 힌트 가림
+                    st.rerun()
+            with col_btn2:
+                if st.button("힌트 보기", key="study_hint_btn", use_container_width=True):
+                    st.session_state.study_show_hint = True
 
+            # 인덱스 변경 후 유효성 검사 다시 진행
             if st.session_state.study_index < len(st.session_state.words):
                 current_word = st.session_state.words[st.session_state.study_index]
                 st.markdown(f"<div style='font-size: 24px;'>단어: {current_word['word']}</div>", unsafe_allow_html=True)
                 st.markdown(f"<div style='font-size: 24px;'>의미: {current_word['meaning']}</div>", unsafe_allow_html=True)
+                
+                # 힌트가 있고 힌트 보기 상태일 때 출력
+                if st.session_state.study_show_hint and current_word.get("hint"):
+                    st.info(f"힌트: {current_word['hint']}")
             else:
                 st.success("모두 학습했습니다.")
         else:
@@ -533,6 +554,7 @@ def render_practice_part():
                 st.session_state.is_practicing = False
                 st.session_state.current_practice_word = None
                 st.session_state.show_answer = False
+                st.session_state.practice_show_hint = False
                 st.session_state.practice_mode = "random"
                 st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
             except Exception as e:
@@ -545,6 +567,7 @@ def render_practice_part():
                 st.session_state.is_practicing = False
                 st.session_state.current_practice_word = None
                 st.session_state.show_answer = False
+                st.session_state.practice_show_hint = False
                 st.session_state.practice_mode = "random"
                 st.success("연습 단어가 랜덤으로 섞였습니다!")
             else:
@@ -557,6 +580,7 @@ def render_practice_part():
                 st.session_state.is_practicing = False
                 st.session_state.current_practice_word = None
                 st.session_state.show_answer = False
+                st.session_state.practice_show_hint = False
                 st.success("연습 준비가 완료되었습니다. 아래에서 연습 방식을 선택해 주세요.")
             else:
                 st.warning("먼저 파일을 선택해 주세요.")
@@ -571,6 +595,7 @@ def render_practice_part():
                 st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
                 st.session_state.is_practicing = True
                 st.session_state.show_answer = False
+                st.session_state.practice_show_hint = False
                 if len(st.session_state.practice_queue) > 0:
                     st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
                     set_next_practice_display_side()
@@ -586,6 +611,7 @@ def render_practice_part():
                 st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
                 st.session_state.is_practicing = True
                 st.session_state.show_answer = False
+                st.session_state.practice_show_hint = False
                 if len(st.session_state.practice_queue) > 0:
                     st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
                     set_next_practice_display_side()
@@ -601,6 +627,7 @@ def render_practice_part():
                 st.session_state.practice_queue = list(st.session_state.words) if len(st.session_state.practice_queue) == 0 else st.session_state.practice_queue
                 st.session_state.is_practicing = True
                 st.session_state.show_answer = False
+                st.session_state.practice_show_hint = False
                 if len(st.session_state.practice_queue) > 0:
                     st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
                     set_next_practice_display_side()
@@ -612,13 +639,19 @@ def render_practice_part():
     if st.session_state.is_practicing:
         st.write("---")
         if st.session_state.current_practice_word is not None:
-            score_col1, score_col2, score_col3, score_col4, score_col5 = st.columns(5)
+            # 힌트 버튼 추가를 위해 6개 컬럼으로 분할
+            score_col1, hint_col, score_col2, score_col3, score_col4, score_col5 = st.columns(6)
 
             with score_col1:
                 if st.button("정답", use_container_width=True):
                     st.session_state.show_answer = True
 
+            with hint_col:
+                if st.button("힌트 보기", use_container_width=True):
+                    st.session_state.practice_show_hint = True
+
             with score_col2:
+                # 정답을 확인해야만 버튼 활성화
                 if st.button("100%", disabled=not st.session_state.show_answer, use_container_width=True):
                     handle_practice_score(100)
 
@@ -648,6 +681,10 @@ def render_practice_part():
                     f"<div style='font-size: 40px; text-align: center; padding: 20px;'>문제: {question_text}</div>",
                     unsafe_allow_html=True
                 )
+
+                # 힌트 보기 상태일 때 출력
+                if st.session_state.practice_show_hint and st.session_state.current_practice_word.get("hint"):
+                    st.info(f"힌트: {st.session_state.current_practice_word['hint']}")
 
                 if st.session_state.show_answer:
                     st.markdown(
