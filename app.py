@@ -388,11 +388,11 @@ def load_data(selected_files):
 # 6. UI - 학습 파트
 # ---------------------------
 def render_study_part():
-    st.header("📖 학습 파트")
+    st.header("학습 파트")
     st.caption("💡 단축키: [스페이스바] 다음 단어 / [H] 힌트 보기")
     selected_files = render_sidebar("study")
     
-    if st.button("🚀 선택한 파일로 학습 시작", use_container_width=True):
+    if st.button("선택한 파일로 학습 시작", use_container_width=True):
         if load_data(selected_files):
             st.session_state.is_studying = True
             st.session_state.study_index = 0
@@ -428,14 +428,14 @@ def render_study_part():
                 
             st.caption(f"진행 상황: {st.session_state.study_index + 1} / {len(st.session_state.words)}")
         else:
-            st.success("🎉 모든 단어 학습을 완료했습니다!")
+            st.success("모든 단어 학습을 완료했습니다!")
 
 # ---------------------------
 # 7. UI - 연습 파트 (망각 곡선 적용)
 # ---------------------------
 def render_practice_part():
-    st.header("📝 연습 파트 (망각 곡선 적용)")
-    st.caption("💡 단축키: [스페이스바] 정답 / [H] 힌트 / [Z] 100 / [X] 60 / [C] 40 / [V] 0")
+    st.header("연습 파트 (망각 곡선 적용)")
+    st.caption("단축키: [스페이스바] 정답 / Capslock 이용시 편리 / [H] 힌트 / [Z] 100 / [X] 60 / [C] 40 / [V] 0")
     selected_files = render_sidebar("practice")
     
     c1, c2, c3 = st.columns(3)
@@ -508,7 +508,7 @@ def render_practice_part():
             st.markdown(f"<div class='test-answer'>정답: {a_text}</div>", unsafe_allow_html=True)
 
     elif st.session_state.is_practicing:
-        st.success("🎉 완벽합니다! 대기열의 모든 연습을 완료했습니다.")
+        st.success("완벽합니다! 대기열의 모든 연습을 완료했습니다.")
 
 # ---------------------------
 # 8. UI - 시험 파트
@@ -717,15 +717,15 @@ def main():
     
     st.title("단어 암기 프로그램")
     
-    page = st.radio("파트 이동", ["📖 학습", "📝 연습 (망각곡선 적용)", "🎯 시험", "📁 단어장 추가"], horizontal=True, label_visibility="collapsed")
+    page = st.radio("파트 이동", ["학습", "연습 (망각곡선 적용)", "시험", "단어장 추가"], horizontal=True, label_visibility="collapsed")
     
-    if page == "📖 학습":
+    if page == "학습":
         render_study_part()
-    elif page == "📝 연습 (망각곡선 적용)":
+    elif page == "연습 (망각곡선 적용)":
         render_practice_part()
-    elif page == "🎯 시험":
+    elif page == "시험":
         render_exam_part()
-    elif page == "📁 단어장 추가":
+    elif page == "단어장 추가":
         render_wordbook_part()
         
     # 페이지 하단에서 자바스크립트(단축키) 주입
