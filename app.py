@@ -2,12 +2,13 @@ import streamlit as st
 import random
 import requests
 import base64
-import re
-import calendar
-from datetime import datetime, date, timedelta
+from datetime import datetime
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
+# ---------------------------
+# 기본 페이지 설정
+# ---------------------------
 st.set_page_config(
     page_title="단어 암기 프로그램",
     page_icon="📚",
@@ -15,11 +16,9 @@ st.set_page_config(
 )
 
 # ---------------------------
-# Session State
+# 1. Session State 초기화
 # ---------------------------
 def init_session_state():
-    now = datetime.now()
-
     defaults = {
         "words": [],
         "loaded_words_snapshot": [],
@@ -29,15 +28,13 @@ def init_session_state():
         "study_show_hint": False,
 
         "practice_queue": [],
-        "practice_queue_snapshot": [],
         "current_practice_word": None,
         "is_practicing": False,
         "practice_display_side": 0,
         "practice_mode": "random",
-        "show_answer": False,
+        "practice_show_answer": False,
         "practice_show_hint": False,
 
-        "exam_show_answer": False,
         "exam_queue": [],
         "exam_source_words": [],
         "current_exam_word": None,
@@ -47,104 +44,57 @@ def init_session_state():
         "exam_current_number": 0,
         "exam_correct_count": 0,
         "exam_wrong_count": 0,
+        "exam_show_answer": False,
         "exam_display_side": 0,
         "exam_total_count_input": 10,
 
         "font_scale": 1.0,
-        "button_scale": 1.0,
-        "big_button_mode": False,
-
-        "selected_files_study": [],
-        "selected_files_practice": [],
-        "selected_files_exam": [],
     }
 
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
-def keep_session_keys():
-    protected_keys = [
-        "words", "loaded_words_snapshot", "study_index", "is_studying", "study_show_hint",
-        "practice_queue", "practice_queue_snapshot", "current_practice_word", "is_practicing",
-        "practice_display_side", "practice_mode", "show_answer", "practice_show_hint",
-        "exam_show_answer", "exam_queue", "exam_source_words", "current_exam_word",
-        "is_examining", "exam_mode", "exam_total_count", "exam_current_number",
-        "exam_correct_count", "exam_wrong_count", "exam_display_side", "exam_total_count_input",
-        "font_scale", "button_scale", "big_button_mode",
-        "selected_files_study", "selected_files_practice", "selected_files_exam"
-    ]
-    for key in protected_keys:
-        if key in st.session_state:
-            st.session_state[key] = st.session_state[key]
-
-def restore_if_words_disappeared():
-    if len(st.session_state.words) == 0 and len(st.session_state.loaded_words_snapshot) > 0:
-        st.session_state.words = list(st.session_state.loaded_words_snapshot)
-    if len(st.session_state.practice_queue) == 0 and st.session_state.is_practicing:
-        if st.session_state.current_practice_word is None and len(st.session_state.practice_queue_snapshot) > 0:
-            st.session_state.practice_queue = list(st.session_state.practice_queue_snapshot)
-    if len(st.session_state.exam_source_words) == 0 and st.session_state.is_examining:
-        if len(st.session_state.words) > 0:
-            st.session_state.exam_source_words = list(st.session_state.words)
-
 # ---------------------------
-# Font / Style
+# 2. 글로벌 CSS 스타일 (글자 크기 조절 및 고정 레이아웃)
 # ---------------------------
-def increase_font_scale():
-    st.session_state.font_scale = min(1.8, round(st.session_state.font_scale + 0.1, 1))
-    st.session_state.button_scale = min(1.8, round(st.session_state.button_scale + 0.1, 1))
-
-def decrease_font_scale():
-    st.session_state.font_scale = max(0.8, round(st.session_state.font_scale - 0.1, 1))
-    st.session_state.button_scale = max(0.8, round(st.session_state.button_scale - 0.1, 1))
-
-def reset_font_scale():
-    st.session_state.font_scale = 1.0
-    st.session_state.button_scale = 1.0
-    st.session_state.big_button_mode = False
-
-def toggle_big_button_mode():
-    st.session_state.big_button_mode = not st.session_state.big_button_mode
-
 def apply_global_style():
-    font_scale = st.session_state.font_scale
-    button_scale = st.session_state.button_scale
-    big_button_mode = st.session_state.big_button_mode
-
-    if big_button_mode:
-        button_scale = max(button_scale, 1.35)
-        font_scale = max(font_scale, 1.1)
-
-    base_font = 16 * font_scale
-    small_font = 14 * font_scale
-    large_font = 24 * font_scale
-    question_font = 40 * font_scale
-    answer_font = 30 * font_scale
-    exam_question_font = 42 * font_scale
-    button_height = int(44 * button_scale)
-    button_font = 16 * font_scale
-    input_font = 16 * font_scale
-
-    st.markdown(
-        f"""
+    scale = st.session_state.font_scale
+    base = int(16 * scale)
+    large = int(24 * scale)
+    huge = int(40 * scale)
+    
+    st.markdown(f"""
         <style>
-        html, body, [data-testid="stAppViewContainer"] {{ font-size: {base_font}px !important; }}
-        p, li, label, div, span {{ font-size: {base_font}px; }}
-        .study-word {{ font-size: {large_font}px !important; line-height: 1.5; word-break: keep-all; margin-bottom: 0.5rem; text-align: center; }}
-        .practice-question {{ font-size: {question_font}px !important; text-align: center; padding: 20px; line-height: 1.5; word-break: keep-all; }}
-        .practice-answer {{ font-size: {answer_font}px !important; text-align: center; color: gray; padding: 10px; line-height: 1.5; word-break: keep-all; }}
-        .exam-question {{ font-size: {exam_question_font}px !important; text-align: center; padding: 28px; line-height: 1.5; word-break: keep-all; }}
-        .exam-answer {{ font-size: {answer_font}px !important; text-align: center; color: gray; padding: 12px; line-height: 1.5; word-break: keep-all; }}
-        div[data-testid="stButton"] > button, .stFormSubmitButton > button {{
-            min-height: {button_height}px !important; font-size: {button_font}px !important; font-weight: 700 !important; border-radius: 12px !important;
+        html, body, [data-testid="stAppViewContainer"] {{ font-size: {base}px !important; }}
+        p, li, div, span {{ font-size: {base}px; }}
+        
+        /* 단어 카드 스타일 */
+        .study-card {{
+            background-color: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
         }}
+        .word-text {{ font-size: {large}px !important; font-weight: bold; color: #1f77b4; margin-bottom: 10px; text-align: center; }}
+        .meaning-text {{ font-size: {large}px !important; margin-bottom: 10px; text-align: center; }}
+        .hint-text {{ font-size: {base}px !important; color: #d62728; background-color: #ffe8e8; padding: 10px; border-radius: 5px; margin-top: 10px; }}
+        
+        /* 연습/시험 큰 글씨 */
+        .test-question {{ font-size: {huge}px !important; text-align: center; padding: 30px 10px; font-weight: bold; }}
+        .test-answer {{ font-size: {large}px !important; text-align: center; color: #2ca02c; font-weight: bold; margin-bottom: 20px; }}
+        
+        /* 버튼 텍스트 강제 크기 지정 */
+        div[data-testid="stButton"] > button {{ font-size: {base}px !important; font-weight: 600 !important; }}
         </style>
-        """, unsafe_allow_html=True
-    )
+    """, unsafe_allow_html=True)
+
+def change_font_scale(amount):
+    st.session_state.font_scale = max(0.8, min(2.0, st.session_state.font_scale + amount))
 
 # ---------------------------
-# GitHub API & Caching
+# 3. GitHub API 및 캐싱
 # ---------------------------
 def get_github_headers():
     token = str(st.secrets["github_token"]).strip()
@@ -156,64 +106,74 @@ def get_repo_info():
     branch = str(st.secrets["github_branch"]).strip()
     return owner, repo, branch
 
-def encode_github_path(path):
-    return quote(str(path).strip(), safe="/")
-
-@st.cache_data(ttl=120, max_entries=256, show_spinner=False)
-def github_get_contents_cached(path):
+@st.cache_data(ttl=60, show_spinner=False)
+def github_get_contents(path):
     owner, repo, branch = get_repo_info()
-    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{encode_github_path(path)}?ref={quote(branch, safe='')}"
-    response = requests.get(url, headers=get_github_headers(), timeout=30)
-    return response.status_code, response.json() if response.content else {}
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{quote(path.strip(), safe='/')}?ref={quote(branch)}"
+    response = requests.get(url, headers=get_github_headers(), timeout=15)
+    return response.status_code, response.json() if response.status_code == 200 else {}
 
-@st.cache_data(ttl=120, show_spinner=False)
-def get_dynamic_main_categories():
-    status, data = github_get_contents_cached("word_list")
+def get_dynamic_categories():
+    status, data = github_get_contents("word_list")
     if status == 200 and isinstance(data, list):
         return sorted([item["name"] for item in data if item["type"] == "dir"])
     return []
 
-@st.cache_data(ttl=120, show_spinner=False)
 def get_subfolders(main_category):
-    status, data = github_get_contents_cached(f"word_list/{main_category}")
+    status, data = github_get_contents(f"word_list/{main_category}")
     if status == 200 and isinstance(data, list):
         folders = [item["name"] for item in data if item["type"] == "dir"]
-        return sorted(folders) if folders else ["(하위 폴더 없음)"]
-    return ["(하위 폴더 없음)"]
+        return sorted(folders) if folders else []
+    return []
 
-@st.cache_data(ttl=120, max_entries=256, show_spinner=False)
-def get_github_txt_files(folder_path):
-    try:
-        status_code, data = github_get_contents_cached(folder_path)
-        if status_code != 200: return []
-        if isinstance(data, list):
-            return sorted([item.get("name") for item in data if item.get("type") == "file" and item.get("name", "").lower().endswith(".txt")])
-        return []
-    except Exception:
-        return []
+def get_txt_files(folder_path):
+    status, data = github_get_contents(folder_path)
+    if status == 200 and isinstance(data, list):
+        return sorted([item["name"] for item in data if item["type"] == "file" and item["name"].lower().endswith(".txt")])
+    return []
 
-@st.cache_data(ttl=120, max_entries=512, show_spinner=False)
-def get_github_file_text(repo_file_path):
-    status_code, data = github_get_contents_cached(repo_file_path)
-    if status_code != 200: raise Exception(f"GitHub 파일을 불러오지 못했습니다. (코드: {status_code})")
-    content_b64 = data.get("content", "").replace("\n", "")
-    return base64.b64decode(content_b64).decode("utf-8")
+def get_file_content(repo_file_path):
+    status, data = github_get_contents(repo_file_path)
+    if status == 200:
+        return base64.b64decode(data.get("content", "")).decode("utf-8")
+    return ""
+
+def upload_text_to_github(folder_path, file_name, text_content):
+    owner, repo, branch = get_repo_info()
+    repo_path = f"{str(folder_path).strip()}/{str(file_name).strip()}"
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{quote(repo_path, safe='/')}"
+    
+    content_b64 = base64.b64encode(text_content.encode("utf-8")).decode("utf-8")
+    payload = {
+        "message": f"Add word list: {repo_path}",
+        "content": content_b64,
+        "branch": branch
+    }
+    
+    response = requests.put(url, headers=get_github_headers(), json=payload, timeout=30)
+    return response, repo_path
+
+def clear_github_cache():
+    st.cache_data.clear()
 
 # ---------------------------
-# Parsing Logic (3줄 힌트 지원)
+# 4. 단어 파싱 및 검증 유틸
 # ---------------------------
 def parse_word_text(text):
-    normalized_text = text.replace("\r\n", "\n").replace("：", ":")
-    lines = normalized_text.split("\n")
+    normalized = text.replace("\r\n", "\n").replace("：", ":")
+    lines = normalized.split("\n")
     parsed_words = []
     i = 0
+    
     while i < len(lines):
         while i < len(lines) and not lines[i].strip(): i += 1
         if i >= len(lines): break
+        
         block = []
         while i < len(lines) and lines[i].strip():
             block.append(lines[i].strip())
             i += 1
+            
         if not block: continue
         
         if ":" in block[0]:
@@ -226,101 +186,289 @@ def parse_word_text(text):
                 word, meaning = block[0], block[1]
                 hint = "\n".join(block[2:])
                 if word and meaning: parsed_words.append({"word": word, "meaning": meaning, "hint": hint})
-    return parsed_words
-
-def deduplicate_words(words):
-    seen = set()
-    result = []
-    for item in words:
-        key = (item.get("word", "").strip(), item.get("meaning", "").strip(), item.get("hint", "").strip())
+                
+    # 중복 제거
+    seen, result = set(), []
+    for w in parsed_words:
+        key = (w["word"], w["meaning"], w["hint"])
         if key not in seen:
             seen.add(key)
-            result.append(item)
+            result.append(w)
     return result
 
+def parse_words_with_validation(text):
+    normalized = text.replace("\r\n", "\n").replace("：", ":")
+    lines = normalized.split("\n")
+    parsed_words, errors = [], []
+    i = 0
+    
+    while i < len(lines):
+        while i < len(lines) and not lines[i].strip(): i += 1
+        if i >= len(lines): break
+        
+        block_start = i
+        block = []
+        while i < len(lines) and lines[i].strip():
+            block.append(lines[i].strip())
+            i += 1
+            
+        if not block: continue
+
+        if ":" in block[0]:
+            parts = block[0].split(":", 1)
+            word, meaning = parts[0].strip(), parts[1].strip()
+            hint = "\n".join(block[1:]) if len(block) > 1 else ""
+
+            if not word: errors.append(f"{block_start + 1}번 줄: 단어가 없습니다.")
+            elif not meaning: errors.append(f"{block_start + 1}번 줄: 뜻이 없습니다.")
+            else: parsed_words.append({"word": word, "meaning": meaning, "hint": hint})
+        else:
+            if len(block) == 1:
+                errors.append(f"{block_start + 1}번 줄: 뜻이 없는 단어입니다.")
+            else:
+                word, meaning = block[0], block[1]
+                hint = "\n".join(block[2:])
+                
+                if not word: errors.append(f"{block_start + 1}번 줄: 단어가 없습니다.")
+                elif not meaning: errors.append(f"{block_start + 2}번 줄: 뜻이 없습니다.")
+                else: parsed_words.append({"word": word, "meaning": meaning, "hint": hint})
+
+    return parsed_words, errors
+
+def make_safe_filename(name):
+    invalid_chars = ['\\', '/', ':', '*', '?', '"', '<', '>', '|']
+    safe_name = str(name).strip()
+    for ch in invalid_chars:
+        safe_name = safe_name.replace(ch, "_")
+    if not safe_name: safe_name = "untitled"
+    if not safe_name.lower().endswith(".txt"): safe_name += ".txt"
+    return safe_name
+
+def get_default_title_prefix():
+    korea_now = datetime.now(ZoneInfo("Asia/Seoul"))
+    return korea_now.strftime("%Y-%m-%d_")
+
 # ---------------------------
-# Sidebar UI Controls
+# 5. UI - 사이드바 (설정 및 폴더)
 # ---------------------------
-def render_sidebar_controls(prefix):
+def render_sidebar(prefix):
     with st.sidebar:
+        st.subheader("⚙️ 화면 설정")
+        col1, col2, col3 = st.columns(3)
+        if col1.button("A+", use_container_width=True): change_font_scale(0.1); st.rerun()
+        if col2.button("A-", use_container_width=True): change_font_scale(-0.1); st.rerun()
+        if col3.button("기본", use_container_width=True): st.session_state.font_scale = 1.0; st.rerun()
+        
         st.write("---")
-        st.subheader("⚙️ 설정 및 파일 선택")
+        st.subheader("📁 파일 선택")
         
-        # 1. 글자 크기 조절
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            if st.button("A+", key=f"{prefix}_font_plus", use_container_width=True): increase_font_scale(); st.rerun()
-        with c2:
-            if st.button("A-", key=f"{prefix}_font_minus", use_container_width=True): decrease_font_scale(); st.rerun()
-        with c3:
-            if st.button("기본", key=f"{prefix}_font_reset", use_container_width=True): reset_font_scale(); st.rerun()
-
-        # 2. 동적 대분류 선택 (폴더명 자동 인식)
-        categories = get_dynamic_main_categories()
+        categories = get_dynamic_categories()
         if not categories:
-            st.warning("word_list 폴더를 찾을 수 없습니다.")
+            st.error("word_list 폴더를 찾을 수 없습니다.")
             return []
-
-        main_cat = st.selectbox("대분류 (폴더) 선택", categories, key=f"{prefix}_main_cat")
+            
+        main_cat = st.selectbox("1. 대분류 선택", categories, key=f"{prefix}_main_cat")
+        sub_folders = get_subfolders(main_cat)
         
-        # 3. 하위 폴더 및 파일 다중 선택 (콤보박스)
-        subfolders = get_subfolders(main_cat)
-        
-        all_txt_files = []
-        if subfolders and subfolders[0] != "(하위 폴더 없음)":
-            selected_subs = st.multiselect("하위 폴더 선택", subfolders, default=subfolders, key=f"{prefix}_sub_cat")
+        all_files = []
+        if sub_folders:
+            selected_subs = st.multiselect("2. 하위 폴더 선택", sub_folders, default=sub_folders, key=f"{prefix}_sub_cat")
             for sub in selected_subs:
                 path = f"word_list/{main_cat}/{sub}"
-                files = get_github_txt_files(path)
-                for f in files: all_txt_files.append({"folder": path, "file": f, "label": f"[{sub}] {f}"})
+                for f in get_txt_files(path):
+                    all_files.append({"path": f"{path}/{f}", "label": f"[{sub}] {f}"})
         else:
             path = f"word_list/{main_cat}"
-            files = get_github_txt_files(path)
-            for f in files: all_txt_files.append({"folder": path, "file": f, "label": f})
-
-        if not all_txt_files:
-            st.info("선택한 폴더에 txt 파일이 없습니다.")
+            for f in get_txt_files(path):
+                all_files.append({"path": f"{path}/{f}", "label": f})
+                
+        if not all_files:
+            st.warning("해당 폴더에 txt 파일이 없습니다.")
             return []
-
-        # 콤보박스(multiselect) 형태로 원하는 파일 선택
-        file_labels = [item["label"] for item in all_txt_files]
-        selected_labels = st.multiselect("학습할 파일 선택", file_labels, default=file_labels, key=f"{prefix}_file_select")
+            
+        file_labels = [f["label"] for f in all_files]
+        selected_labels = st.multiselect("3. 파일 선택", file_labels, default=file_labels, key=f"{prefix}_file_select")
         
-        selected_items = [item for item in all_txt_files if item["label"] in selected_labels]
-        return selected_items
+        return [f for f in all_files if f["label"] in selected_labels]
 
-def load_and_start(prefix, selected_items, mode="random"):
-    if not selected_items:
-        st.warning("사이드바에서 파일을 하나 이상 선택해 주세요.")
+def load_data(selected_files):
+    if not selected_files:
+        st.warning("사이드바에서 파일을 선택해주세요.")
         return False
+        
+    merged = []
+    for f in selected_files:
+        text = get_file_content(f["path"])
+        merged.extend(parse_word_text(text))
+        
+    random.shuffle(merged)
+    st.session_state.words = merged
+    return True
 
-    merged_words = []
-    for item in selected_items:
-        text = get_github_file_text(f"{item['folder']}/{item['file']}")
-        merged_words.extend(parse_word_text(text))
+# ---------------------------
+# 6. UI - 학습 파트
+# ---------------------------
+def render_study_part():
+    st.header("📖 학습 파트")
+    selected_files = render_sidebar("study")
     
-    merged_words = deduplicate_words(merged_words)
-    random.shuffle(merged_words)
+    if st.button("🚀 선택한 파일로 학습 시작", use_container_width=True):
+        if load_data(selected_files):
+            st.session_state.is_studying = True
+            st.session_state.study_index = 0
+            st.session_state.study_show_hint = False
+            st.rerun()
+            
+    if st.session_state.is_studying:
+        if st.session_state.study_index < len(st.session_state.words):
+            word_data = st.session_state.words[st.session_state.study_index]
+            has_hint = bool(word_data["hint"].strip())
+            
+            st.write("---")
+            # 1. 상단 컨트롤
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("다음 단어 ⏭️", use_container_width=True):
+                    st.session_state.study_index += 1
+                    st.session_state.study_show_hint = False # 다음 단어로 가면 힌트 숨김
+                    st.rerun()
+            with c2:
+                if st.button("힌트 보기 💡", use_container_width=True, disabled=not has_hint):
+                    st.session_state.study_show_hint = True
+                    st.rerun()
+                    
+            # 2. 고정 카드 영역
+            st.markdown(f"""
+                <div class="study-card">
+                    <div class="word-text">{word_data['word']}</div>
+                    <div class="meaning-text">{word_data['meaning']}</div>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            if st.session_state.study_show_hint and has_hint:
+                st.markdown(f"<div class='hint-text'><strong>힌트:</strong><br>{word_data['hint'].replace(chr(10), '<br>')}</div>", unsafe_allow_html=True)
+                
+            st.caption(f"진행 상황: {st.session_state.study_index + 1} / {len(st.session_state.words)}")
+        else:
+            st.success("🎉 모든 단어 학습을 완료했습니다!")
+
+# ---------------------------
+# 7. UI - 연습 파트 (망각 곡선 적용)
+# ---------------------------
+def render_practice_part():
+    st.header("📝 연습 파트 (망각 곡선 적용)")
+    selected_files = render_sidebar("practice")
     
-    st.session_state.words = list(merged_words)
-    st.session_state.loaded_words_snapshot = list(merged_words)
+    c1, c2, c3 = st.columns(3)
+    mode = None
+    if c1.button("이름만 연습", use_container_width=True): mode = "word_only"
+    if c2.button("뜻만 연습", use_container_width=True): mode = "meaning_only"
+    if c3.button("랜덤 연습", use_container_width=True): mode = "random"
     
-    if prefix == "study":
-        st.session_state.study_index = 0
-        st.session_state.is_studying = True
-        st.session_state.study_show_hint = False
-    elif prefix == "practice":
+    if mode and load_data(selected_files):
         st.session_state.practice_queue = list(st.session_state.words)
-        st.session_state.practice_queue_snapshot = list(st.session_state.practice_queue)
         st.session_state.is_practicing = True
-        st.session_state.show_answer = False
-        st.session_state.practice_show_hint = False
         st.session_state.practice_mode = mode
-        if len(st.session_state.practice_queue) > 0:
+        st.session_state.practice_show_answer = False
+        st.session_state.practice_show_hint = False
+        
+        if st.session_state.practice_queue:
             st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-            st.session_state.practice_display_side = random.choice([0, 1]) if mode == "random" else (0 if mode=="meaning_only" else 1)
-    elif prefix == "exam":
-        st.session_state.exam_source_words = list(st.session_state.words)
+            st.session_state.practice_display_side = random.choice([0,1]) if mode == "random" else (0 if mode == "meaning_only" else 1)
+        st.rerun()
+
+    if st.session_state.is_practicing and st.session_state.current_practice_word:
+        cw = st.session_state.current_practice_word
+        has_hint = bool(cw["hint"].strip())
+        is_ans_shown = st.session_state.practice_show_answer
+        
+        st.write("---")
+        # 1. 정답 / 힌트 버튼
+        btn1, btn2 = st.columns(2)
+        with btn1:
+            if st.button("정답 확인 👁️", use_container_width=True):
+                st.session_state.practice_show_answer = True
+                st.rerun()
+        with btn2:
+            if st.button("힌트 보기 💡", use_container_width=True, disabled=not has_hint):
+                st.session_state.practice_show_hint = True
+                st.rerun()
+                
+        # 2. 채점 버튼 (망각 곡선 기반 큐 재배치)
+        st.caption("※ 정답 확인 후 평가 버튼을 눌러주세요. 평가에 따라 재출제 시기가 다릅니다.")
+        s1, s2, s3, s4 = st.columns(4)
+        
+        def apply_score(level):
+            n = len(st.session_state.practice_queue)
+            
+            # 망각 곡선 이론에 따른 동적 위치 삽입
+            if level == 60:
+                # 조금 앎 (일주일 후 복습 효과) -> 상위 50~80% 사이 삽입
+                pos = random.randint(int(n * 0.5), int(n * 0.8)) if n > 1 else 0
+                st.session_state.practice_queue.insert(pos, cw)
+            elif level == 40:
+                # 헷갈림 (하루 뒤 복습 효과) -> 상위 20~40% 사이 삽입
+                pos = random.randint(int(n * 0.2), int(n * 0.4)) if n > 1 else 0
+                st.session_state.practice_queue.insert(pos, cw)
+            elif level == 0:
+                # 모름 (10분 후 즉시 복습 효과) -> 상위 5~15% 사이 삽입
+                pos = random.randint(max(1, int(n * 0.05)), max(1, int(n * 0.15))) if n > 1 else 0
+                st.session_state.practice_queue.insert(pos, cw)
+            # level == 100 이면 완전 암기로 간주하고 재삽입 안 함
+            
+            # 다음 문제로 넘어가기 위한 초기화
+            st.session_state.practice_show_answer = False
+            st.session_state.practice_show_hint = False
+            
+            if st.session_state.practice_queue:
+                st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
+                pmode = st.session_state.practice_mode
+                st.session_state.practice_display_side = random.choice([0,1]) if pmode == "random" else (0 if pmode == "meaning_only" else 1)
+            else:
+                st.session_state.current_practice_word = None
+                
+        with s1:
+            if st.button("완벽함 (100)", disabled=not is_ans_shown, use_container_width=True): apply_score(100); st.rerun()
+        with s2:
+            if st.button("조금 앎 (60)", disabled=not is_ans_shown, use_container_width=True): apply_score(60); st.rerun()
+        with s3:
+            if st.button("헷갈림 (40)", disabled=not is_ans_shown, use_container_width=True): apply_score(40); st.rerun()
+        with s4:
+            if st.button("모름 (0)", disabled=not is_ans_shown, use_container_width=True): apply_score(0); st.rerun()
+
+        # 3. 단어 문제/정답 영역 고정
+        q_text = cw["word"] if st.session_state.practice_display_side == 0 else cw["meaning"]
+        a_text = cw["meaning"] if st.session_state.practice_display_side == 0 else cw["word"]
+        
+        st.markdown(f"<div class='study-card'><div class='test-question'>Q: {q_text}</div></div>", unsafe_allow_html=True)
+        
+        if st.session_state.practice_show_hint and has_hint:
+            st.markdown(f"<div class='hint-text'><strong>힌트:</strong><br>{cw['hint'].replace(chr(10), '<br>')}</div>", unsafe_allow_html=True)
+            
+        if is_ans_shown:
+            st.markdown(f"<div class='test-answer'>정답: {a_text}</div>", unsafe_allow_html=True)
+
+    elif st.session_state.is_practicing:
+        st.success("🎉 완벽합니다! 대기열의 모든 연습을 완료했습니다.")
+
+# ---------------------------
+# 8. UI - 시험 파트
+# ---------------------------
+def render_exam_part():
+    st.header("🎯 시험 파트")
+    selected_files = render_sidebar("exam")
+    
+    with st.sidebar:
+        st.write("---")
+        st.number_input("시험 출제 개수", min_value=1, value=st.session_state.exam_total_count_input, key="exam_total_count_input")
+        
+    m1, m2, m3 = st.columns(3)
+    mode = None
+    if m1.button("이름만 시험", use_container_width=True): mode = "word_only"
+    if m2.button("뜻만 시험", use_container_width=True): mode = "meaning_only"
+    if m3.button("랜덤 시험", use_container_width=True): mode = "random"
+
+    if mode and load_data(selected_files):
         st.session_state.is_examining = True
         st.session_state.exam_mode = mode
         st.session_state.exam_current_number = 0
@@ -328,202 +476,172 @@ def load_and_start(prefix, selected_items, mode="random"):
         st.session_state.exam_wrong_count = 0
         st.session_state.exam_show_answer = False
         
-        exam_words = list(st.session_state.exam_source_words)
-        random.shuffle(exam_words)
+        exam_words = list(st.session_state.words)
         actual_count = min(st.session_state.exam_total_count_input, len(exam_words))
         st.session_state.exam_total_count = actual_count
         st.session_state.exam_queue = exam_words[:actual_count]
         
-        if len(st.session_state.exam_queue) > 0:
+        if st.session_state.exam_queue:
             st.session_state.current_exam_word = st.session_state.exam_queue.pop(0)
             st.session_state.exam_current_number += 1
-            st.session_state.exam_display_side = random.choice([0, 1]) if mode == "random" else (0 if mode=="meaning_only" else 1)
-            
-    return True
+            st.session_state.exam_display_side = random.choice([0,1]) if mode == "random" else (0 if mode == "meaning_only" else 1)
+        st.rerun()
 
-# ---------------------------
-# Main Views
-# ---------------------------
-def render_study_part():
-    st.header("학습 파트")
-    selected_items = render_sidebar_controls("study")
-    
-    if st.button("선택한 파일로 학습 시작", use_container_width=True):
-        if load_and_start("study", selected_items): st.rerun()
-
-    st.write("---")
-    if st.session_state.is_studying and st.session_state.study_index < len(st.session_state.words):
-        current_word = st.session_state.words[st.session_state.study_index]
-        
-        # 버튼을 상단에 고정
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("다음 단어", use_container_width=True):
-                st.session_state.study_index += 1
-                st.session_state.study_show_hint = False
-                st.rerun()
-        with c2:
-            has_hint = bool(current_word.get("hint", "").strip())
-            if st.button("힌트 보기", use_container_width=True, disabled=not has_hint):
-                st.session_state.study_show_hint = True
-                st.rerun()
-                
-        st.write("---")
-        # 단어 카드 출력 영역
-        st.markdown(f"<div class='study-word'>단어: {current_word['word']}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='study-word'>의미: {current_word['meaning']}</div>", unsafe_allow_html=True)
-        if st.session_state.study_show_hint and has_hint:
-            st.info(f"힌트:\n{current_word['hint']}")
-            
-    elif st.session_state.is_studying:
-        st.success("모든 학습을 완료했습니다.")
-
-def render_practice_part():
-    st.header("연습 파트")
-    selected_items = render_sidebar_controls("practice")
-    
-    m1, m2, m3 = st.columns(3)
-    with m1:
-        if st.button("이름만 연습", use_container_width=True): load_and_start("practice", selected_items, "word_only")
-    with m2:
-        if st.button("뜻만 연습", use_container_width=True): load_and_start("practice", selected_items, "meaning_only")
-    with m3:
-        if st.button("랜덤 연습", use_container_width=True): load_and_start("practice", selected_items, "random")
-
-    st.write("---")
-    
-    if st.session_state.is_practicing and st.session_state.current_practice_word is not None:
-        cw = st.session_state.current_practice_word
-        has_hint = bool(cw.get("hint", "").strip())
-        is_answered = st.session_state.show_answer
-
-        # 1. 정답 / 힌트 버튼 (상단)
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("정답 확인", use_container_width=True):
-                st.session_state.show_answer = True; st.rerun()
-        with c2:
-            if st.button("힌트 보기", use_container_width=True, disabled=not has_hint):
-                st.session_state.practice_show_hint = True; st.rerun()
-        
-        # 2. 점수 버튼 (정답을 봐야 활성화)
-        s1, s2, s3, s4 = st.columns(4)
-        
-        def process_score(level):
-            n = len(st.session_state.practice_queue)
-            if level == 60: st.session_state.practice_queue.insert(max(0, int(n*0.6)), cw)
-            elif level == 40: st.session_state.practice_queue.insert(max(0, int(n*0.3)), cw)
-            elif level == 0: st.session_state.practice_queue.insert(max(0, int(n*0.1)), cw)
-            
-            st.session_state.show_answer = False
-            st.session_state.practice_show_hint = False
-            if len(st.session_state.practice_queue) > 0:
-                st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-                st.session_state.practice_display_side = random.choice([0, 1]) if st.session_state.practice_mode == "random" else (0 if st.session_state.practice_mode=="meaning_only" else 1)
-            else:
-                st.session_state.current_practice_word = None
-                
-        with s1: 
-            if st.button("100%", disabled=not is_answered, use_container_width=True): process_score(100); st.rerun()
-        with s2: 
-            if st.button("60%", disabled=not is_answered, use_container_width=True): process_score(60); st.rerun()
-        with s3: 
-            if st.button("40%", disabled=not is_answered, use_container_width=True): process_score(40); st.rerun()
-        with s4: 
-            if st.button("0%", disabled=not is_answered, use_container_width=True): process_score(0); st.rerun()
-
-        st.write("---")
-        
-        # 3. 단어 카드 (하단 고정)
-        question_text = cw["word"] if st.session_state.practice_display_side == 0 else cw["meaning"]
-        answer_text = cw["meaning"] if st.session_state.practice_display_side == 0 else cw["word"]
-
-        st.markdown(f"<div class='practice-question'>문제: {question_text}</div>", unsafe_allow_html=True)
-        if st.session_state.practice_show_hint and has_hint:
-            st.info(f"힌트:\n{cw['hint']}")
-        if is_answered:
-            st.markdown(f"<div class='practice-answer'>정답: {answer_text}</div>", unsafe_allow_html=True)
-
-    elif st.session_state.is_practicing:
-        st.success("모든 연습을 완료했습니다.")
-
-def render_exam_part():
-    st.header("시험 파트")
-    selected_items = render_sidebar_controls("exam")
-    
-    with st.sidebar:
-        st.number_input("시험 개수", min_value=1, value=st.session_state.exam_total_count_input, key="exam_total_count_input")
-    
-    m1, m2, m3 = st.columns(3)
-    with m1:
-        if st.button("이름만 시험", use_container_width=True): load_and_start("exam", selected_items, "word_only")
-    with m2:
-        if st.button("뜻만 시험", use_container_width=True): load_and_start("exam", selected_items, "meaning_only")
-    with m3:
-        if st.button("랜덤 시험", use_container_width=True): load_and_start("exam", selected_items, "random")
-
-    st.write("---")
-
-    if st.session_state.is_examining and st.session_state.current_exam_word is not None:
+    if st.session_state.is_examining and st.session_state.current_exam_word:
         cw = st.session_state.current_exam_word
-        is_answered = st.session_state.exam_show_answer
+        is_ans_shown = st.session_state.exam_show_answer
 
-        # 1. 제어 버튼 상단 고정
+        st.write("---")
         c1, c2, c3, c4 = st.columns([1, 1, 1, 2.5])
         with c1:
-            if st.button("정답 확인", use_container_width=True): st.session_state.exam_show_answer = True; st.rerun()
+            if st.button("정답 확인", use_container_width=True):
+                st.session_state.exam_show_answer = True
+                st.rerun()
         
-        def process_exam(correct=True):
+        def next_exam(correct=True):
             if correct: st.session_state.exam_correct_count += 1
             else: st.session_state.exam_wrong_count += 1
-            st.session_state.exam_show_answer = False
             
-            if len(st.session_state.exam_queue) > 0:
+            st.session_state.exam_show_answer = False
+            if st.session_state.exam_queue:
                 st.session_state.current_exam_word = st.session_state.exam_queue.pop(0)
                 st.session_state.exam_current_number += 1
-                st.session_state.exam_display_side = random.choice([0, 1]) if st.session_state.exam_mode == "random" else (0 if st.session_state.exam_mode=="meaning_only" else 1)
+                pmode = st.session_state.exam_mode
+                st.session_state.exam_display_side = random.choice([0,1]) if pmode == "random" else (0 if pmode == "meaning_only" else 1)
             else:
                 st.session_state.current_exam_word = None
                 
         with c2:
-            if st.button("O (맞음)", disabled=not is_answered, use_container_width=True): process_exam(True); st.rerun()
+            if st.button("O (맞음)", disabled=not is_ans_shown, use_container_width=True): next_exam(True); st.rerun()
         with c3:
-            if st.button("X (틀림)", disabled=not is_answered, use_container_width=True): process_exam(False); st.rerun()
+            if st.button("X (틀림)", disabled=not is_ans_shown, use_container_width=True): next_exam(False); st.rerun()
         with c4:
-            tot = st.session_state.exam_total_count
-            cur = st.session_state.exam_current_number
-            st.info(f"진행: {cur}/{tot} | 맞음: {st.session_state.exam_correct_count} | 틀림: {st.session_state.exam_wrong_count}")
+            st.info(f"진행: {st.session_state.exam_current_number}/{st.session_state.exam_total_count} | 맞음: {st.session_state.exam_correct_count} | 틀림: {st.session_state.exam_wrong_count}")
 
-        st.write("---")
-        
-        # 2. 시험 카드 하단 고정
-        question_text = cw["word"] if st.session_state.exam_display_side == 0 else cw["meaning"]
-        answer_text = cw["meaning"] if st.session_state.exam_display_side == 0 else cw["word"]
+        q_text = cw["word"] if st.session_state.exam_display_side == 0 else cw["meaning"]
+        a_text = cw["meaning"] if st.session_state.exam_display_side == 0 else cw["word"]
 
-        st.markdown(f"<div class='exam-question'>문제: {question_text}</div>", unsafe_allow_html=True)
-        if is_answered:
-            st.markdown(f"<div class='exam-answer'>정답: {answer_text}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='study-card'><div class='test-question'>Q: {q_text}</div></div>", unsafe_allow_html=True)
+        if is_ans_shown:
+            st.markdown(f"<div class='test-answer'>정답: {a_text}</div>", unsafe_allow_html=True)
 
     elif st.session_state.is_examining:
-        st.success(f"시험 종료! 맞음: {st.session_state.exam_correct_count} | 틀림: {st.session_state.exam_wrong_count}")
+        st.success(f"🎊 시험 종료! 최종 성적: {st.session_state.exam_correct_count} / {st.session_state.exam_total_count}")
 
+# ---------------------------
+# 9. UI - 단어장 파트 (복구 및 개선)
+# ---------------------------
+def render_wordbook_part():
+    st.header("📁 단어장 관리 (Github 연동)")
+    st.caption("새로운 단어장 파일(.txt)을 깃허브 저장소에 업로드합니다.")
 
+    _, top_right = st.columns([5, 1])
+    with top_right:
+        if st.button("새로고침", use_container_width=True):
+            clear_github_cache()
+            st.success("캐시 새로고침 완료")
+            st.rerun()
+
+    categories = get_dynamic_categories()
+    if not categories:
+        st.error("저장할 폴더 트리를 불러오지 못했습니다.")
+        return
+        
+    c1, c2 = st.columns(2)
+    with c1: main_cat = st.selectbox("1. 대분류 선택", categories, key="wb_main_cat")
+    with c2: 
+        sub_folders = get_subfolders(main_cat)
+        sub_cat = st.selectbox("2. 하위 폴더 선택", sub_folders, key="wb_sub_cat") if sub_folders else None
+
+    target_folder = f"word_list/{main_cat}/{sub_cat}" if sub_cat else f"word_list/{main_cat}"
+    
+    st.write(f"**현재 폴더 구조:** `{target_folder}`")
+    with st.expander("현재 폴더에 있는 파일 목록 보기"):
+        existing = get_txt_files(target_folder)
+        if existing:
+            for f in existing: st.write(f"- {f}")
+        else:
+            st.info("비어 있습니다.")
+
+    st.write("---")
+    tab1, tab2 = st.tabs(["✍️ 직접 입력해서 저장", "📄 txt 파일 업로드"])
+
+    # 탭 1. 직접 입력
+    with tab1:
+        with st.form("manual_wordbook_form"):
+            manual_title = st.text_input("파일 제목", value=get_default_title_prefix(), placeholder="예: 2026-07-20_N2_오답노트")
+            manual_text = st.text_area("단어장 내용 (단어/뜻/힌트 순서)", height=250, placeholder="단어\n뜻\n이 단어는 이러이러합니다 (힌트)\n\n다음단어\n다음뜻")
+            manual_pw = st.text_input("업로드 비밀번호", type="password")
+            
+            if st.form_submit_button("형식 검사 및 저장", use_container_width=True):
+                parsed, errors = parse_words_with_validation(manual_text)
+                if errors:
+                    st.error("형식 오류가 있습니다. 수정 후 다시 시도하세요.")
+                    for err in errors: st.write(f"- {err}")
+                elif not parsed:
+                    st.warning("저장할 단어가 없습니다.")
+                elif manual_pw != str(st.secrets.get("upload_password", "")).strip():
+                    st.error("비밀번호가 올바르지 않습니다.")
+                else:
+                    safe_name = make_safe_filename(manual_title)
+                    resp, path = upload_text_to_github(target_folder, safe_name, manual_text)
+                    if resp.status_code in [200, 201]:
+                        clear_github_cache()
+                        st.success(f"성공적으로 업로드되었습니다: {path}")
+                    else:
+                        st.error(f"저장 실패 (코드: {resp.status_code})")
+
+    # 탭 2. 텍스트 파일 업로드
+    with tab2:
+        uploaded_file = st.file_uploader("txt 파일 선택", type=["txt"])
+        if uploaded_file:
+            try:
+                up_text = uploaded_file.getvalue().decode("utf-8")
+            except:
+                up_text = uploaded_file.getvalue().decode("cp949", errors="ignore")
+                
+            parsed, errors = parse_words_with_validation(up_text)
+            if errors:
+                st.error("파일 형식 오류 발견!")
+                for err in errors[:5]: st.write(f"- {err}")
+            else:
+                st.success(f"정상 단어 {len(parsed)}개 확인 완료.")
+                
+            with st.form("upload_txt_form"):
+                up_title = st.text_input("저장할 파일명", placeholder="기본적으로 원본 파일명을 사용합니다", value=uploaded_file.name)
+                up_pw = st.text_input("업로드 비밀번호", type="password")
+                if st.form_submit_button("파일 통째로 저장", use_container_width=True):
+                    if errors or not parsed: st.warning("형식을 수정해주세요.")
+                    elif up_pw != str(st.secrets.get("upload_password", "")).strip(): st.error("비밀번호 오류.")
+                    else:
+                        safe_name = make_safe_filename(up_title)
+                        resp, path = upload_text_to_github(target_folder, safe_name, up_text)
+                        if resp.status_code in [200, 201]:
+                            clear_github_cache()
+                            st.success(f"업로드 성공: {path}")
+                        else:
+                            st.error("업로드 실패")
+
+# ---------------------------
+# 10. 메인 실행
+# ---------------------------
 def main():
     init_session_state()
-    keep_session_keys()
-    restore_if_words_disappeared()
     apply_global_style()
-
+    
     st.title("단어 암기 프로그램")
-    st.sidebar.title("메뉴")
-    page = st.sidebar.radio("파트를 선택하세요", ["학습", "연습", "시험"])
-
-    if page == "학습":
+    
+    # 상단 네비게이션용 Radio
+    page = st.radio("파트 이동", ["📖 학습", "📝 연습 (망각곡선 적용)", "🎯 시험", "📁 단어장 추가"], horizontal=True, label_visibility="collapsed")
+    
+    if page == "📖 학습":
         render_study_part()
-    elif page == "연습":
+    elif page == "📝 연습 (망각곡선 적용)":
         render_practice_part()
-    elif page == "시험":
+    elif page == "🎯 시험":
         render_exam_part()
+    elif page == "📁 단어장 추가":
+        render_wordbook_part()
 
 if __name__ == "__main__":
     main()
