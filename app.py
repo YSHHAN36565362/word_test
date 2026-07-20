@@ -53,25 +53,9 @@ def init_session_state():
         "mobile_button_scale": 1.0,
         "mobile_big_button_mode": False,
 
-        "selected_files_study": [],
-        "selected_files_practice": [],
-        "selected_files_exam": [],
-
-        "selected_required_files_study": [],
-        "selected_required_files_practice": [],
-        "selected_required_files_exam": [],
-
-        "selected_date_files_study": [],
-        "selected_date_files_practice": [],
-        "selected_date_files_exam": [],
-
-        "widget_selected_required_files_study": [],
-        "widget_selected_required_files_practice": [],
-        "widget_selected_required_files_exam": [],
-
-        "widget_selected_date_files_study": [],
-        "widget_selected_date_files_practice": [],
-        "widget_selected_date_files_exam": [],
+        "selected_labels_study": [],
+        "selected_labels_practice": [],
+        "selected_labels_exam": [],
 
         "calendar_year_study": now.year,
         "calendar_month_study": now.month,
@@ -545,211 +529,7 @@ def upload_text_to_github(folder_path, file_name, text_content):
 
 
 # ---------------------------
-# File loading / merging
-# ---------------------------
-def load_words_from_multiple_github_files(selected_items, order_mode):
-    merged_words = []
-
-    if order_mode == "최신 날짜 우선":
-        sorted_items = sorted(
-            selected_items,
-            key=lambda x: (
-                extract_iso_date_from_filename(x["file"]) is not None,
-                extract_iso_date_from_filename(x["file"]) or date(1900, 1, 1)
-            ),
-            reverse=True
-        )
-    else:
-        sorted_items = list(selected_items)
-
-    for item in sorted_items:
-        repo_file_path = f"{item['folder']}/{item['file']}"
-        text = get_github_file_text(repo_file_path)
-        parsed = parse_word_text(text)
-        merged_words.extend(parsed)
-
-    merged_words = deduplicate_words(merged_words)
-
-    if order_mode == "랜덤":
-        random.shuffle(merged_words)
-
-    return merged_words
-
-
-# ---------------------------
-# Selector state sync
-# ---------------------------
-def sync_widget_to_internal(prefix):
-    st.session_state[f"selected_required_files_{prefix}"] = list(
-        st.session_state.get(f"widget_selected_required_files_{prefix}", [])
-    )
-    st.session_state[f"selected_date_files_{prefix}"] = list(
-        st.session_state.get(f"widget_selected_date_files_{prefix}", [])
-    )
-    st.session_state[f"selected_files_{prefix}"] = (
-        list(st.session_state[f"selected_required_files_{prefix}"])
-        + list(st.session_state[f"selected_date_files_{prefix}"])
-    )
-
-
-def sync_internal_to_widget(prefix):
-    st.session_state[f"widget_selected_required_files_{prefix}"] = list(
-        st.session_state.get(f"selected_required_files_{prefix}", [])
-    )
-    st.session_state[f"widget_selected_date_files_{prefix}"] = list(
-        st.session_state.get(f"selected_date_files_{prefix}", [])
-    )
-    st.session_state[f"selected_files_{prefix}"] = (
-        list(st.session_state[f"selected_required_files_{prefix}"])
-        + list(st.session_state[f"selected_date_files_{prefix}"])
-    )
-
-
-def clear_all_selection(prefix):
-    st.session_state[f"selected_required_files_{prefix}"] = []
-    st.session_state[f"selected_date_files_{prefix}"] = []
-    st.session_state[f"selected_files_{prefix}"] = []
-    st.session_state[f"calendar_selected_dates_{prefix}"] = []
-    sync_internal_to_widget(prefix)
-
-
-def render_quick_date_buttons(dated_real_files, dated_labels, label_to_item, prefix):
-    selected_dates_key = f"calendar_selected_dates_{prefix}"
-
-    q1, q2, q3, q4 = st.columns(4)
-
-    if q1.button("이번 주", key=f"{prefix}_quick_this_week", use_container_width=True):
-        start_d, end_d = get_this_week_range()
-        files = filter_dated_files_by_range(dated_real_files, start_d, end_d)
-        selected_set = set(files)
-        applied_labels = [label for label in dated_labels if label_to_item[label]["file"] in selected_set]
-        st.session_state[f"selected_date_files_{prefix}"] = applied_labels
-        st.session_state[selected_dates_key] = sorted(
-            {extract_iso_date_from_filename(f) for f in files if extract_iso_date_from_filename(f)}
-        )
-        sync_internal_to_widget(prefix)
-        st.rerun()
-
-    if q2.button("지난 주", key=f"{prefix}_quick_last_week", use_container_width=True):
-        start_d, end_d = get_last_week_range()
-        files = filter_dated_files_by_range(dated_real_files, start_d, end_d)
-        selected_set = set(files)
-        applied_labels = [label for label in dated_labels if label_to_item[label]["file"] in selected_set]
-        st.session_state[f"selected_date_files_{prefix}"] = applied_labels
-        st.session_state[selected_dates_key] = sorted(
-            {extract_iso_date_from_filename(f) for f in files if extract_iso_date_from_filename(f)}
-        )
-        sync_internal_to_widget(prefix)
-        st.rerun()
-
-    if q3.button("이번 달", key=f"{prefix}_quick_this_month", use_container_width=True):
-        start_d, end_d = get_this_month_range()
-        files = filter_dated_files_by_range(dated_real_files, start_d, end_d)
-        selected_set = set(files)
-        applied_labels = [label for label in dated_labels if label_to_item[label]["file"] in selected_set]
-        st.session_state[f"selected_date_files_{prefix}"] = applied_labels
-        st.session_state[selected_dates_key] = sorted(
-            {extract_iso_date_from_filename(f) for f in files if extract_iso_date_from_filename(f)}
-        )
-        sync_internal_to_widget(prefix)
-        st.rerun()
-
-    if q4.button("빠른 선택 해제", key=f"{prefix}_quick_clear", use_container_width=True):
-        st.session_state[f"selected_date_files_{prefix}"] = []
-        st.session_state[selected_dates_key] = []
-        sync_internal_to_widget(prefix)
-        st.rerun()
-
-
-def render_calendar_selector(dated_real_files, prefix):
-    year_key = f"calendar_year_{prefix}"
-    month_key = f"calendar_month_{prefix}"
-    selected_dates_key = f"calendar_selected_dates_{prefix}"
-
-    file_date_map = {}
-    all_dates = []
-
-    for f in dated_real_files:
-        dt = extract_iso_date_from_filename(f)
-        if dt:
-            file_date_map.setdefault(dt, []).append(f)
-            all_dates.append(dt)
-
-    if not all_dates:
-        st.info("날짜 파일이 없어 캘린더를 표시하지 않습니다.")
-        return []
-
-    available_years = sorted({d.year for d in all_dates})
-    if st.session_state[year_key] not in available_years:
-        st.session_state[year_key] = available_years[0]
-
-    months_for_year = sorted({d.month for d in all_dates if d.year == st.session_state[year_key]})
-    if months_for_year and st.session_state[month_key] not in months_for_year:
-        st.session_state[month_key] = months_for_year[0]
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.selectbox("연도", available_years, key=year_key)
-    with c2:
-        months_for_year = sorted({d.month for d in all_dates if d.year == st.session_state[year_key]})
-        st.selectbox("월", months_for_year, key=month_key)
-
-    year = st.session_state[year_key]
-    month = st.session_state[month_key]
-    st.write("#### 날짜 선택")
-
-    month_dates = sorted([d for d in all_dates if d.year == year and d.month == month])
-
-    weekday_names = ["월", "화", "수", "목", "금", "토", "일"]
-    head_cols = st.columns(7)
-    for idx, wd in enumerate(weekday_names):
-        with head_cols[idx]:
-            st.markdown(f"**{wd}**")
-
-    cal = calendar.monthcalendar(year, month)
-
-    for week in cal:
-        cols = st.columns(7)
-        for i, day in enumerate(week):
-            with cols[i]:
-                if day == 0:
-                    st.write("")
-                else:
-                    current_date = date(year, month, day)
-                    has_file = current_date in file_date_map
-                    checked = current_date in st.session_state[selected_dates_key]
-
-                    if has_file:
-                        new_value = st.checkbox(
-                            f"{day}",
-                            value=checked,
-                            key=f"{prefix}_calendar_day_{year}_{month}_{day}"
-                        )
-                        if new_value and current_date not in st.session_state[selected_dates_key]:
-                            st.session_state[selected_dates_key].append(current_date)
-                        elif (not new_value) and current_date in st.session_state[selected_dates_key]:
-                            st.session_state[selected_dates_key].remove(current_date)
-                    else:
-                        st.markdown(f"<span style='color:#bbb'>{day}</span>", unsafe_allow_html=True)
-
-    b1, b2 = st.columns(2)
-    if b1.button("이 달 전체 선택", key=f"{prefix}_select_month_btn", use_container_width=True):
-        st.session_state[selected_dates_key] = month_dates
-        st.rerun()
-
-    if b2.button("날짜 선택 해제", key=f"{prefix}_clear_month_btn", use_container_width=True):
-        st.session_state[selected_dates_key] = []
-        st.rerun()
-
-    selected_files = []
-    for dt in st.session_state[selected_dates_key]:
-        selected_files.extend(file_date_map.get(dt, []))
-
-    return sorted(set(selected_files))
-
-
-# ---------------------------
-# Folder/file picker
+# Folder / file helpers
 # ---------------------------
 def get_main_category_options():
     return ["IT", "Japanese"]
@@ -803,7 +583,7 @@ def render_folder_picker(prefix, title_text):
     return folder_list, main_category
 
 
-def render_file_selector_section(folder_list, prefix, main_category):
+def get_merged_items(folder_list):
     merged_items = []
     errors = []
 
@@ -818,6 +598,189 @@ def render_file_selector_section(folder_list, prefix, main_category):
                     "file": f,
                     "label": f"[{folder_path.split('/')[-1]}] {f}"
                 })
+
+    return merged_items, errors
+
+
+def get_selected_labels(prefix):
+    return set(st.session_state.get(f"selected_labels_{prefix}", []))
+
+
+def set_selected_labels(prefix, labels):
+    st.session_state[f"selected_labels_{prefix}"] = sorted(set(labels))
+
+
+def clear_all_selection(prefix):
+    set_selected_labels(prefix, [])
+    st.session_state[f"calendar_selected_dates_{prefix}"] = []
+
+
+def select_all_from_labels(prefix, labels):
+    current = get_selected_labels(prefix)
+    current.update(labels)
+    set_selected_labels(prefix, current)
+
+
+def remove_labels(prefix, labels):
+    current = get_selected_labels(prefix)
+    for label in labels:
+        current.discard(label)
+    set_selected_labels(prefix, current)
+
+
+def apply_quick_date_selection(prefix, dated_labels, label_to_item, range_type):
+    dated_real_files = [label_to_item[label]["file"] for label in dated_labels]
+
+    if range_type == "this_week":
+        start_d, end_d = get_this_week_range()
+    elif range_type == "last_week":
+        start_d, end_d = get_last_week_range()
+    else:
+        start_d, end_d = get_this_month_range()
+
+    files = filter_dated_files_by_range(dated_real_files, start_d, end_d)
+    selected_set = set(files)
+    applied_labels = [label for label in dated_labels if label_to_item[label]["file"] in selected_set]
+
+    current = get_selected_labels(prefix)
+    for label in dated_labels:
+        current.discard(label)
+    current.update(applied_labels)
+    set_selected_labels(prefix, current)
+
+    st.session_state[f"calendar_selected_dates_{prefix}"] = sorted(
+        {extract_iso_date_from_filename(f) for f in files if extract_iso_date_from_filename(f)}
+    )
+
+
+def get_calendar_selected_files(dated_real_files, prefix):
+    year_key = f"calendar_year_{prefix}"
+    month_key = f"calendar_month_{prefix}"
+    selected_dates_key = f"calendar_selected_dates_{prefix}"
+
+    file_date_map = {}
+    all_dates = []
+
+    for f in dated_real_files:
+        dt = extract_iso_date_from_filename(f)
+        if dt:
+            file_date_map.setdefault(dt, []).append(f)
+            all_dates.append(dt)
+
+    if not all_dates:
+        st.info("날짜 파일이 없어 캘린더를 표시하지 않습니다.")
+        return []
+
+    available_years = sorted({d.year for d in all_dates})
+    if st.session_state[year_key] not in available_years:
+        st.session_state[year_key] = available_years[0]
+
+    months_for_year = sorted({d.month for d in all_dates if d.year == st.session_state[year_key]})
+    if months_for_year and st.session_state[month_key] not in months_for_year:
+        st.session_state[month_key] = months_for_year[0]
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.selectbox("연도", available_years, key=year_key)
+    with c2:
+        months_for_year = sorted({d.month for d in all_dates if d.year == st.session_state[year_key]})
+        st.selectbox("월", months_for_year, key=month_key)
+
+    year = st.session_state[year_key]
+    month = st.session_state[month_key]
+
+    st.write("#### 날짜 선택")
+
+    month_dates = sorted([d for d in all_dates if d.year == year and d.month == month])
+
+    weekday_names = ["월", "화", "수", "목", "금", "토", "일"]
+    head_cols = st.columns(7)
+    for idx, wd in enumerate(weekday_names):
+        with head_cols[idx]:
+            st.markdown(f"**{wd}**")
+
+    cal = calendar.monthcalendar(year, month)
+
+    for week in cal:
+        cols = st.columns(7)
+        for i, day in enumerate(week):
+            with cols[i]:
+                if day == 0:
+                    st.write("")
+                else:
+                    current_date = date(year, month, day)
+                    has_file = current_date in file_date_map
+                    checked = current_date in st.session_state[selected_dates_key]
+
+                    if has_file:
+                        new_value = st.checkbox(
+                            f"{day}",
+                            value=checked,
+                            key=f"{prefix}_calendar_day_{year}_{month}_{day}"
+                        )
+                        if new_value and current_date not in st.session_state[selected_dates_key]:
+                            st.session_state[selected_dates_key].append(current_date)
+                        elif (not new_value) and current_date in st.session_state[selected_dates_key]:
+                            st.session_state[selected_dates_key].remove(current_date)
+                    else:
+                        st.markdown(f"<span style='color:#bbb'>{day}</span>", unsafe_allow_html=True)
+
+    b1, b2 = st.columns(2)
+    with b1:
+        if st.button("이 달 전체 선택", key=f"{prefix}_select_month_btn", use_container_width=True):
+            st.session_state[selected_dates_key] = month_dates
+            st.rerun()
+    with b2:
+        if st.button("날짜 선택 해제", key=f"{prefix}_clear_month_btn", use_container_width=True):
+            st.session_state[selected_dates_key] = []
+            st.rerun()
+
+    selected_files = []
+    for dt in st.session_state[selected_dates_key]:
+        selected_files.extend(file_date_map.get(dt, []))
+
+    return sorted(set(selected_files))
+
+
+def render_checkbox_file_group(title, labels, prefix, group_name):
+    st.write(f"#### {title}")
+
+    if not labels:
+        st.info("선택 가능한 파일이 없습니다.")
+        return
+
+    current_selected = get_selected_labels(prefix)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button(f"{title} 전체 선택", key=f"{prefix}_{group_name}_all_btn", use_container_width=True):
+            select_all_from_labels(prefix, labels)
+            st.rerun()
+    with c2:
+        if st.button(f"{title} 선택 해제", key=f"{prefix}_{group_name}_clear_btn", use_container_width=True):
+            remove_labels(prefix, labels)
+            st.rerun()
+
+    for label in labels:
+        checked = label in current_selected
+        new_checked = st.checkbox(
+            label,
+            value=checked,
+            key=f"{prefix}_{group_name}_chk_{label}"
+        )
+
+        if new_checked != checked:
+            updated = get_selected_labels(prefix)
+            if new_checked:
+                updated.add(label)
+            else:
+                updated.discard(label)
+            set_selected_labels(prefix, updated)
+            st.rerun()
+
+
+def render_file_selector_section(folder_list, prefix, main_category):
+    merged_items, errors = get_merged_items(folder_list)
 
     if errors:
         for err in errors:
@@ -835,93 +798,60 @@ def render_file_selector_section(folder_list, prefix, main_category):
     dated_labels = [item["label"] for item in merged_items if item["file"] in dated_files]
     dated_real_files = [label_to_item[label]["file"] for label in dated_labels]
 
-    sync_internal_to_widget(prefix)
-
     st.write("### 파일 선택")
-
-    top1, top2 = st.columns(2)
-    if top1.button("전체 선택 해제", key=f"{prefix}_clear_all_btn", use_container_width=True):
-        clear_all_selection(prefix)
-        st.rerun()
-    with top2:
+    t1, t2 = st.columns(2)
+    with t1:
+        if st.button("전체 선택 해제", key=f"{prefix}_clear_all_btn", use_container_width=True):
+            clear_all_selection(prefix)
+            st.rerun()
+    with t2:
         st.caption(f"전체 파일 수: {len(merged_items)}개")
 
     if main_category == "Japanese":
-        st.write("#### 필수 파일")
-        r1, r2 = st.columns(2)
-
-        if r1.button("필수 파일 전체 선택", key=f"{prefix}_required_all_btn", use_container_width=True):
-            st.session_state[f"selected_required_files_{prefix}"] = list(required_labels)
-            sync_internal_to_widget(prefix)
-            st.rerun()
-
-        if r2.button("필수 파일 해제", key=f"{prefix}_required_clear_btn", use_container_width=True):
-            st.session_state[f"selected_required_files_{prefix}"] = []
-            sync_internal_to_widget(prefix)
-            st.rerun()
-
-        st.multiselect(
-            "날짜 없는 필수 단어 파일 선택",
-            options=required_labels,
-            key=f"widget_selected_required_files_{prefix}"
-        )
-
-        st.write("#### 날짜 파일")
-        d1, d2 = st.columns(2)
-
-        if d1.button("날짜 파일 전체 선택", key=f"{prefix}_dated_all_btn", use_container_width=True):
-            st.session_state[f"selected_date_files_{prefix}"] = list(dated_labels)
-            sync_internal_to_widget(prefix)
-            st.rerun()
-
-        if d2.button("날짜 파일 해제", key=f"{prefix}_dated_clear_btn", use_container_width=True):
-            st.session_state[f"selected_date_files_{prefix}"] = []
-            st.session_state[f"calendar_selected_dates_{prefix}"] = []
-            sync_internal_to_widget(prefix)
-            st.rerun()
-
-        st.multiselect(
-            "날짜 파일 직접 선택",
-            options=dated_labels,
-            key=f"widget_selected_date_files_{prefix}"
-        )
-
-        sync_widget_to_internal(prefix)
+        render_checkbox_file_group("필수 파일", required_labels, prefix, "required")
+        render_checkbox_file_group("날짜 파일", dated_labels, prefix, "dated")
 
         with st.expander("빠른 날짜 선택 / 캘린더"):
-            render_quick_date_buttons(dated_real_files, dated_labels, label_to_item, prefix)
-            calendar_selected_files = render_calendar_selector(dated_real_files, prefix)
+            q1, q2, q3, q4 = st.columns(4)
+
+            with q1:
+                if st.button("이번 주", key=f"{prefix}_quick_this_week", use_container_width=True):
+                    apply_quick_date_selection(prefix, dated_labels, label_to_item, "this_week")
+                    st.rerun()
+
+            with q2:
+                if st.button("지난 주", key=f"{prefix}_quick_last_week", use_container_width=True):
+                    apply_quick_date_selection(prefix, dated_labels, label_to_item, "last_week")
+                    st.rerun()
+
+            with q3:
+                if st.button("이번 달", key=f"{prefix}_quick_this_month", use_container_width=True):
+                    apply_quick_date_selection(prefix, dated_labels, label_to_item, "this_month")
+                    st.rerun()
+
+            with q4:
+                if st.button("빠른 선택 해제", key=f"{prefix}_quick_clear", use_container_width=True):
+                    remove_labels(prefix, dated_labels)
+                    st.session_state[f"calendar_selected_dates_{prefix}"] = []
+                    st.rerun()
+
+            calendar_selected_files = get_calendar_selected_files(dated_real_files, prefix)
 
             if st.button("캘린더 선택 반영", key=f"{prefix}_calendar_apply_btn", use_container_width=True):
                 selected_set = set(calendar_selected_files)
                 applied_labels = [label for label in dated_labels if label_to_item[label]["file"] in selected_set]
-                st.session_state[f"selected_date_files_{prefix}"] = applied_labels
-                sync_internal_to_widget(prefix)
+
+                current = get_selected_labels(prefix)
+                for label in dated_labels:
+                    current.discard(label)
+                current.update(applied_labels)
+                set_selected_labels(prefix, current)
                 st.rerun()
 
     else:
-        st.write("#### 파일 선택")
-        a1, a2 = st.columns(2)
+        render_checkbox_file_group("파일", [item["label"] for item in merged_items], prefix, "allfiles")
 
-        if a1.button("전체 파일 선택", key=f"{prefix}_it_all_btn", use_container_width=True):
-            st.session_state[f"selected_required_files_{prefix}"] = [item["label"] for item in merged_items]
-            st.session_state[f"selected_date_files_{prefix}"] = []
-            sync_internal_to_widget(prefix)
-            st.rerun()
-
-        if a2.button("파일 선택 해제", key=f"{prefix}_it_clear_btn", use_container_width=True):
-            clear_all_selection(prefix)
-            st.rerun()
-
-        st.multiselect(
-            "학습할 파일들 선택",
-            options=[item["label"] for item in merged_items],
-            key=f"widget_selected_required_files_{prefix}"
-        )
-
-        sync_widget_to_internal(prefix)
-
-    selected_now_labels = st.session_state[f"selected_files_{prefix}"]
+    selected_now_labels = get_selected_labels(prefix)
     selected_items = [label_to_item[label] for label in selected_now_labels if label in label_to_item]
 
     if selected_items:
@@ -933,6 +863,38 @@ def render_file_selector_section(folder_list, prefix, main_category):
         st.caption("현재 선택된 파일이 없습니다.")
 
     return selected_items
+
+
+# ---------------------------
+# File loading / merging
+# ---------------------------
+def load_words_from_multiple_github_files(selected_items, order_mode):
+    merged_words = []
+
+    if order_mode == "최신 날짜 우선":
+        sorted_items = sorted(
+            selected_items,
+            key=lambda x: (
+                extract_iso_date_from_filename(x["file"]) is not None,
+                extract_iso_date_from_filename(x["file"]) or date(1900, 1, 1)
+            ),
+            reverse=True
+        )
+    else:
+        sorted_items = list(selected_items)
+
+    for item in sorted_items:
+        repo_file_path = f"{item['folder']}/{item['file']}"
+        text = get_github_file_text(repo_file_path)
+        parsed = parse_word_text(text)
+        merged_words.extend(parsed)
+
+    merged_words = deduplicate_words(merged_words)
+
+    if order_mode == "랜덤":
+        random.shuffle(merged_words)
+
+    return merged_words
 
 
 # ---------------------------
@@ -1086,7 +1048,7 @@ def handle_practice_score(level):
 
 
 # ---------------------------
-# UI parts
+# UI Parts
 # ---------------------------
 def render_study_part():
     st.header("학습 파트")
@@ -1100,35 +1062,38 @@ def render_study_part():
 
     c1, c2, c3 = st.columns(3)
 
-    if c1.button("선택한 파일 불러오기", use_container_width=True):
-        try:
-            if not selected_items:
-                st.warning("먼저 파일을 하나 이상 선택해 주세요.")
-            else:
-                st.session_state.words = load_words_from_multiple_github_files(selected_items, order_mode)
+    with c1:
+        if st.button("선택한 파일 불러오기", use_container_width=True):
+            try:
+                if not selected_items:
+                    st.warning("먼저 파일을 하나 이상 선택해 주세요.")
+                else:
+                    st.session_state.words = load_words_from_multiple_github_files(selected_items, order_mode)
+                    st.session_state.study_index = 0
+                    st.session_state.is_studying = False
+                    st.session_state.study_show_hint = False
+                    st.success(f"{len(selected_items)}개 파일에서 {len(st.session_state.words)}개의 단어를 불러왔습니다!")
+            except Exception as e:
+                st.error(f"파일 불러오기 중 오류가 발생했습니다: {e}")
+
+    with c2:
+        if st.button("랜덤으로 섞기", use_container_width=True):
+            if len(st.session_state.words) > 0:
+                random.shuffle(st.session_state.words)
                 st.session_state.study_index = 0
-                st.session_state.is_studying = False
                 st.session_state.study_show_hint = False
-                st.success(f"{len(selected_items)}개 파일에서 {len(st.session_state.words)}개의 단어를 불러왔습니다!")
-        except Exception as e:
-            st.error(f"파일 불러오기 중 오류가 발생했습니다: {e}")
+                st.success("단어 목록이 랜덤으로 섞였습니다!")
+            else:
+                st.warning("먼저 파일을 불러와 주세요.")
 
-    if c2.button("랜덤으로 섞기", use_container_width=True):
-        if len(st.session_state.words) > 0:
-            random.shuffle(st.session_state.words)
-            st.session_state.study_index = 0
-            st.session_state.study_show_hint = False
-            st.success("단어 목록이 랜덤으로 섞였습니다!")
-        else:
-            st.warning("먼저 파일을 불러와 주세요.")
-
-    if c3.button("학습하기", use_container_width=True):
-        if len(st.session_state.words) > 0:
-            st.session_state.is_studying = True
-            st.session_state.study_index = 0
-            st.session_state.study_show_hint = False
-        else:
-            st.warning("먼저 파일을 불러와 주세요.")
+    with c3:
+        if st.button("학습하기", use_container_width=True):
+            if len(st.session_state.words) > 0:
+                st.session_state.is_studying = True
+                st.session_state.study_index = 0
+                st.session_state.study_show_hint = False
+            else:
+                st.warning("먼저 파일을 불러와 주세요.")
 
     if len(st.session_state.words) > 0 and st.session_state.is_studying:
         st.write("---")
@@ -1138,14 +1103,17 @@ def render_study_part():
             has_hint = bool(current_word.get("hint", "").strip())
 
             b1, b2 = st.columns(2)
-            if b1.button("다음", key="study_next_btn", use_container_width=True):
-                st.session_state.study_index += 1
-                st.session_state.study_show_hint = False
-                st.rerun()
 
-            if b2.button("힌트 보기", key="study_hint_btn", use_container_width=True, disabled=not has_hint):
-                st.session_state.study_show_hint = True
-                st.rerun()
+            with b1:
+                if st.button("다음", key="study_next_btn", use_container_width=True):
+                    st.session_state.study_index += 1
+                    st.session_state.study_show_hint = False
+                    st.rerun()
+
+            with b2:
+                if st.button("힌트 보기", key="study_hint_btn", use_container_width=True, disabled=not has_hint):
+                    st.session_state.study_show_hint = True
+                    st.rerun()
 
             if st.session_state.study_index < len(st.session_state.words):
                 current_word = st.session_state.words[st.session_state.study_index]
@@ -1172,56 +1140,64 @@ def render_practice_part():
 
     c1, c2, c3 = st.columns(3)
 
-    if c1.button("선택한 파일 불러오기", key="practice_load", use_container_width=True):
-        try:
-            if not selected_items:
-                st.warning("먼저 파일을 하나 이상 선택해 주세요.")
-            else:
-                st.session_state.words = load_words_from_multiple_github_files(selected_items, order_mode)
-                st.session_state.practice_queue = list(st.session_state.words)
+    with c1:
+        if st.button("선택한 파일 불러오기", key="practice_load", use_container_width=True):
+            try:
+                if not selected_items:
+                    st.warning("먼저 파일을 하나 이상 선택해 주세요.")
+                else:
+                    st.session_state.words = load_words_from_multiple_github_files(selected_items, order_mode)
+                    st.session_state.practice_queue = list(st.session_state.words)
+                    st.session_state.is_practicing = False
+                    st.session_state.current_practice_word = None
+                    st.session_state.show_answer = False
+                    st.session_state.practice_show_hint = False
+                    st.session_state.practice_mode = "random"
+                    st.success(f"{len(selected_items)}개 파일에서 {len(st.session_state.words)}개의 단어를 불러왔습니다!")
+            except Exception as e:
+                st.error(f"파일 불러오기 중 오류가 발생했습니다: {e}")
+
+    with c2:
+        if st.button("단어 랜덤으로 섞기", use_container_width=True):
+            if len(st.session_state.practice_queue) > 0:
+                random.shuffle(st.session_state.practice_queue)
                 st.session_state.is_practicing = False
                 st.session_state.current_practice_word = None
                 st.session_state.show_answer = False
                 st.session_state.practice_show_hint = False
                 st.session_state.practice_mode = "random"
-                st.success(f"{len(selected_items)}개 파일에서 {len(st.session_state.words)}개의 단어를 불러왔습니다!")
-        except Exception as e:
-            st.error(f"파일 불러오기 중 오류가 발생했습니다: {e}")
+                st.success("연습 단어가 랜덤으로 섞였습니다!")
+            else:
+                st.warning("먼저 파일을 불러와 주세요.")
 
-    if c2.button("단어 랜덤으로 섞기", use_container_width=True):
-        if len(st.session_state.practice_queue) > 0:
-            random.shuffle(st.session_state.practice_queue)
-            st.session_state.is_practicing = False
-            st.session_state.current_practice_word = None
-            st.session_state.show_answer = False
-            st.session_state.practice_show_hint = False
-            st.session_state.practice_mode = "random"
-            st.success("연습 단어가 랜덤으로 섞였습니다!")
-        else:
-            st.warning("먼저 파일을 불러와 주세요.")
+    with c3:
+        if st.button("연습 준비", use_container_width=True):
+            if len(st.session_state.words) > 0:
+                if len(st.session_state.practice_queue) == 0:
+                    st.session_state.practice_queue = list(st.session_state.words)
 
-    if c3.button("연습 준비", use_container_width=True):
-        if len(st.session_state.words) > 0:
-            if len(st.session_state.practice_queue) == 0:
-                st.session_state.practice_queue = list(st.session_state.words)
-
-            st.session_state.is_practicing = False
-            st.session_state.current_practice_word = None
-            st.session_state.show_answer = False
-            st.session_state.practice_show_hint = False
-            st.success("연습 준비가 완료되었습니다. 아래에서 연습 방식을 선택해 주세요.")
-        else:
-            st.warning("먼저 파일을 불러와 주세요.")
+                st.session_state.is_practicing = False
+                st.session_state.current_practice_word = None
+                st.session_state.show_answer = False
+                st.session_state.practice_show_hint = False
+                st.success("연습 준비가 완료되었습니다. 아래에서 연습 방식을 선택해 주세요.")
+            else:
+                st.warning("먼저 파일을 불러와 주세요.")
 
     st.write("")
     m1, m2, m3 = st.columns(3)
 
-    if m1.button("단어 이름만 연습하기", use_container_width=True):
-        start_practice("word_only")
-    if m2.button("단어 뜻만 연습하기", use_container_width=True):
-        start_practice("meaning_only")
-    if m3.button("랜덤으로 연습하기", use_container_width=True):
-        start_practice("random")
+    with m1:
+        if st.button("단어 이름만 연습하기", use_container_width=True):
+            start_practice("word_only")
+
+    with m2:
+        if st.button("단어 뜻만 연습하기", use_container_width=True):
+            start_practice("meaning_only")
+
+    with m3:
+        if st.button("랜덤으로 연습하기", use_container_width=True):
+            start_practice("random")
 
     if st.session_state.is_practicing:
         st.write("---")
@@ -1230,29 +1206,35 @@ def render_practice_part():
             has_hint = bool(st.session_state.current_practice_word.get("hint", "").strip())
             c1, c2, c3, c4, c5, c6 = st.columns(6)
 
-            if c1.button("정답", use_container_width=True):
-                st.session_state.show_answer = True
-                st.rerun()
+            with c1:
+                if st.button("정답", use_container_width=True):
+                    st.session_state.show_answer = True
+                    st.rerun()
 
-            if c2.button("힌트 보기", use_container_width=True, disabled=not has_hint):
-                st.session_state.practice_show_hint = True
-                st.rerun()
+            with c2:
+                if st.button("힌트 보기", use_container_width=True, disabled=not has_hint):
+                    st.session_state.practice_show_hint = True
+                    st.rerun()
 
-            if c3.button("100%", disabled=not st.session_state.show_answer, use_container_width=True):
-                handle_practice_score(100)
-                st.rerun()
+            with c3:
+                if st.button("100%", disabled=not st.session_state.show_answer, use_container_width=True):
+                    handle_practice_score(100)
+                    st.rerun()
 
-            if c4.button("60%", disabled=not st.session_state.show_answer, use_container_width=True):
-                handle_practice_score(60)
-                st.rerun()
+            with c4:
+                if st.button("60%", disabled=not st.session_state.show_answer, use_container_width=True):
+                    handle_practice_score(60)
+                    st.rerun()
 
-            if c5.button("40%", disabled=not st.session_state.show_answer, use_container_width=True):
-                handle_practice_score(40)
-                st.rerun()
+            with c5:
+                if st.button("40%", disabled=not st.session_state.show_answer, use_container_width=True):
+                    handle_practice_score(40)
+                    st.rerun()
 
-            if c6.button("0%", disabled=not st.session_state.show_answer, use_container_width=True):
-                handle_practice_score(0)
-                st.rerun()
+            with c6:
+                if st.button("0%", disabled=not st.session_state.show_answer, use_container_width=True):
+                    handle_practice_score(0)
+                    st.rerun()
 
             st.write("---")
 
@@ -1289,37 +1271,40 @@ def render_exam_part():
 
     top1, top2, top3, top4 = st.columns([1.2, 1.2, 1.2, 1.6], vertical_alignment="bottom")
 
-    if top1.button("선택한 파일 불러오기", key="exam_load", use_container_width=True):
-        try:
-            if not selected_items:
-                st.warning("먼저 파일을 하나 이상 선택해 주세요.")
-            else:
-                loaded_words = load_words_from_multiple_github_files(selected_items, order_mode)
-                st.session_state.words = loaded_words
-                st.session_state.exam_source_words = list(loaded_words)
+    with top1:
+        if st.button("선택한 파일 불러오기", key="exam_load", use_container_width=True):
+            try:
+                if not selected_items:
+                    st.warning("먼저 파일을 하나 이상 선택해 주세요.")
+                else:
+                    loaded_words = load_words_from_multiple_github_files(selected_items, order_mode)
+                    st.session_state.words = loaded_words
+                    st.session_state.exam_source_words = list(loaded_words)
+                    reset_exam_state()
+                    st.session_state.exam_total_count_input = min(
+                        max(1, len(st.session_state.exam_source_words)),
+                        st.session_state.exam_total_count_input
+                    )
+                    st.success(f"{len(selected_items)}개 파일에서 {len(loaded_words)}개의 단어를 불러왔습니다!")
+            except Exception as e:
+                st.error(f"파일 불러오기 중 오류가 발생했습니다: {e}")
+
+    with top2:
+        if st.button("단어 랜덤으로 섞기", key="exam_shuffle", use_container_width=True):
+            if len(st.session_state.exam_source_words) > 0:
+                random.shuffle(st.session_state.exam_source_words)
                 reset_exam_state()
-                st.session_state.exam_total_count_input = min(
-                    max(1, len(st.session_state.exam_source_words)),
-                    st.session_state.exam_total_count_input
-                )
-                st.success(f"{len(selected_items)}개 파일에서 {len(loaded_words)}개의 단어를 불러왔습니다!")
-        except Exception as e:
-            st.error(f"파일 불러오기 중 오류가 발생했습니다: {e}")
+                st.success("시험 단어가 랜덤으로 섞였습니다!")
+            else:
+                st.warning("먼저 파일을 불러와 주세요.")
 
-    if top2.button("단어 랜덤으로 섞기", key="exam_shuffle", use_container_width=True):
-        if len(st.session_state.exam_source_words) > 0:
-            random.shuffle(st.session_state.exam_source_words)
-            reset_exam_state()
-            st.success("시험 단어가 랜덤으로 섞였습니다!")
-        else:
-            st.warning("먼저 파일을 불러와 주세요.")
-
-    if top3.button("시험 준비", key="exam_ready", use_container_width=True):
-        if len(st.session_state.exam_source_words) > 0:
-            reset_exam_state()
-            st.success("시험 준비가 완료되었습니다. 아래에서 시험 방식을 선택해 주세요.")
-        else:
-            st.warning("먼저 파일을 불러와 주세요.")
+    with top3:
+        if st.button("시험 준비", key="exam_ready", use_container_width=True):
+            if len(st.session_state.exam_source_words) > 0:
+                reset_exam_state()
+                st.success("시험 준비가 완료되었습니다. 아래에서 시험 방식을 선택해 주세요.")
+            else:
+                st.warning("먼저 파일을 불러와 주세요.")
 
     with top4:
         max_count = max(1, len(st.session_state.exam_source_words)) if len(st.session_state.exam_source_words) > 0 else 1
@@ -1328,6 +1313,7 @@ def render_exam_part():
             st.session_state.exam_total_count_input = max_count
 
         ic1, ic2 = st.columns([2.2, 1])
+
         with ic1:
             st.number_input(
                 "시험 개수 선택하기",
@@ -1336,6 +1322,7 @@ def render_exam_part():
                 step=1,
                 key="exam_total_count_input"
             )
+
         with ic2:
             st.write("")
             if st.button("max", key="exam_count_max_btn", use_container_width=True):
@@ -1347,31 +1334,39 @@ def render_exam_part():
     st.write("")
     m1, m2, m3 = st.columns(3)
 
-    if m1.button("단어 이름만 시험 보기", use_container_width=True):
-        start_exam("word_only")
-    if m2.button("단어 뜻만 시험 보기", use_container_width=True):
-        start_exam("meaning_only")
-    if m3.button("랜덤으로 시험 보기", use_container_width=True):
-        start_exam("random")
+    with m1:
+        if st.button("단어 이름만 시험 보기", use_container_width=True):
+            start_exam("word_only")
+
+    with m2:
+        if st.button("단어 뜻만 시험 보기", use_container_width=True):
+            start_exam("meaning_only")
+
+    with m3:
+        if st.button("랜덤으로 시험 보기", use_container_width=True):
+            start_exam("random")
 
     if st.session_state.current_exam_word is not None:
         st.write("---")
 
         a1, a2, a3, a4 = st.columns([1, 1, 1, 2])
 
-        if a1.button("정답", key="exam_show_answer_btn", use_container_width=True):
-            st.session_state.exam_show_answer = True
-            st.rerun()
+        with a1:
+            if st.button("정답", key="exam_show_answer_btn", use_container_width=True):
+                st.session_state.exam_show_answer = True
+                st.rerun()
 
-        if a2.button("O", key="exam_o_btn", disabled=not st.session_state.exam_show_answer, use_container_width=True):
-            st.session_state.exam_correct_count += 1
-            load_next_exam_question()
-            st.rerun()
+        with a2:
+            if st.button("O", key="exam_o_btn", disabled=not st.session_state.exam_show_answer, use_container_width=True):
+                st.session_state.exam_correct_count += 1
+                load_next_exam_question()
+                st.rerun()
 
-        if a3.button("X", key="exam_x_btn", disabled=not st.session_state.exam_show_answer, use_container_width=True):
-            st.session_state.exam_wrong_count += 1
-            load_next_exam_question()
-            st.rerun()
+        with a3:
+            if st.button("X", key="exam_x_btn", disabled=not st.session_state.exam_show_answer, use_container_width=True):
+                st.session_state.exam_wrong_count += 1
+                load_next_exam_question()
+                st.rerun()
 
         with a4:
             total = st.session_state.exam_total_count
@@ -1414,9 +1409,10 @@ def render_wordbook_part():
     st.caption("사용자는 직접 txt 파일을 업로드하거나 내용을 입력해 새 단어장을 만들 수 있습니다. 날짜 파일은 YYYY-MM-DD 형식을 권장합니다.")
 
     _, top_right = st.columns([5, 1])
-    if top_right.button("새로고침", use_container_width=True):
-        clear_github_cache()
-        st.success("GitHub 목록 캐시를 새로고침했습니다.")
+    with top_right:
+        if st.button("새로고침", use_container_width=True):
+            clear_github_cache()
+            st.success("GitHub 목록 캐시를 새로고침했습니다.")
 
     folders_to_offer = [
         "word_list/IT",
@@ -1492,7 +1488,7 @@ def render_wordbook_part():
 
                             if response.status_code in [200, 201]:
                                 clear_github_cache()
-                                st.success(f"GitHub에 저장되었습니다: {repo_path}")
+                                st.success(f"GitHub에 저장��었습니다: {repo_path}")
                             else:
                                 st.error(f"GitHub 저장 실패: {response.status_code}")
                                 try:
