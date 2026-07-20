@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 # ---------------------------
 st.set_page_config(
     page_title="단어 암기 프로그램",
-    page_icon="📚",
+    page_icon="",
     layout="centered"
 )
 
@@ -50,6 +50,9 @@ def init_session_state():
         "exam_total_count_input": 10,
 
         "font_scale": 1.0,
+        
+        # ****** 연속 수정 안내: 다크 모드/기본 모드 상태 저장 변수 추가 (기본값을 다크 모드로 설정)
+        "theme_mode": "다크 모드",
     }
 
     for key, value in defaults.items():
@@ -65,6 +68,17 @@ def apply_global_style():
     large = int(24 * scale)
     huge = int(40 * scale)
     
+    # ****** 연속 수정 안내: 현재 선택된 테마에 맞춰 색상을 동적으로 변경합니다.
+    is_dark = (st.session_state.theme_mode == "다크 모드")
+    
+    card_bg = "#262730" if is_dark else "#f8f9fa"
+    text_color = "#ffffff" if is_dark else "#000000"
+    word_color = "#4db8ff" if is_dark else "#1f77b4" # 다크모드일 땐 더 밝은 파란색
+    hint_bg = "#3a3b40" if is_dark else "#e9ecef"    # 힌트 배경을 눈이 편안한 회색 계열로 변경
+    hint_text = "#eeeeee" if is_dark else "#333333"  # 빨간 힌트 글씨 제거
+    ans_color = "#45c95c" if is_dark else "#2ca02c"
+    shadow_color = "rgba(0,0,0,0.5)" if is_dark else "rgba(0,0,0,0.1)"
+    
     st.markdown(f"""
         <style>
         html, body, [data-testid="stAppViewContainer"] {{ font-size: {base}px !important; }}
@@ -72,19 +86,19 @@ def apply_global_style():
         
         /* 단어 카드 스타일 */
         .study-card {{
-            background-color: #f8f9fa;
+            background-color: {card_bg};
             border-radius: 10px;
             padding: 20px;
             margin-top: 20px;
-            box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+            box-shadow: 2px 2px 5px {shadow_color};
         }}
-        .word-text {{ font-size: {large}px !important; font-weight: bold; color: #1f77b4; margin-bottom: 10px; text-align: center; }}
-        .meaning-text {{ font-size: {large}px !important; margin-bottom: 10px; text-align: center; }}
-        .hint-text {{ font-size: {base}px !important; color: #d62728; background-color: #ffe8e8; padding: 10px; border-radius: 5px; margin-top: 10px; }}
+        .word-text {{ font-size: {large}px !important; font-weight: bold; color: {word_color}; margin-bottom: 10px; text-align: center; }}
+        .meaning-text {{ font-size: {large}px !important; color: {text_color}; margin-bottom: 10px; text-align: center; }}
+        .hint-text {{ font-size: {base}px !important; color: {hint_text}; background-color: {hint_bg}; padding: 10px; border-radius: 5px; margin-top: 10px; }}
         
         /* 연습/시험 큰 글씨 */
-        .test-question {{ font-size: {huge}px !important; text-align: center; padding: 30px 10px; font-weight: bold; }}
-        .test-answer {{ font-size: {large}px !important; text-align: center; color: #2ca02c; font-weight: bold; margin-bottom: 20px; }}
+        .test-question {{ font-size: {huge}px !important; color: {text_color}; text-align: center; padding: 30px 10px; font-weight: bold; }}
+        .test-answer {{ font-size: {large}px !important; text-align: center; color: {ans_color}; font-weight: bold; margin-bottom: 20px; }}
         
         /* 버튼 텍스트 강제 크기 지정 */
         div[data-testid="stButton"] > button {{ font-size: {base}px !important; font-weight: 600 !important; }}
@@ -289,20 +303,33 @@ def get_default_title_prefix():
     return korea_now.strftime("%Y-%m-%d_")
 
 # ---------------------------
-# 5. UI - 사이드바 (오늘 날짜 필터 적용)
+# 5. UI - 사이드바 (오늘 날짜 필터 적용 및 테마 선택)
 # ---------------------------
 def render_sidebar(prefix):
     with st.sidebar:
         st.subheader("⚙️ 화면 설정")
+        
+        # ****** 연속 수정 안내: 다크/기본 모드를 선택할 수 있는 콤보박스 추가
+        new_theme = st.selectbox(
+            "테마 선택", 
+            ["기본 모드", "다크 모드"], 
+            index=1 if st.session_state.theme_mode == "다크 모드" else 0,
+            key=f"{prefix}_theme_select"
+        )
+        if new_theme != st.session_state.theme_mode:
+            st.session_state.theme_mode = new_theme
+            st.rerun()
+            
+        st.write("") # 간격 띄우기
+        
         col1, col2, col3 = st.columns(3)
         if col1.button("A+", use_container_width=True): change_font_scale(0.1); st.rerun()
         if col2.button("A-", use_container_width=True): change_font_scale(-0.1); st.rerun()
-        if col3.button("기본", use_container_width=True): st.session_state.font_scale = 1.0; st.rerun()
+        if col3.button("크기 초기화", use_container_width=True): st.session_state.font_scale = 1.0; st.rerun()
         
         st.write("---")
         st.subheader("📁 파일 선택")
         
-        # 오늘 날짜만 보기 체크박스 추가
         today_str = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
         show_today_only = st.checkbox(f"📅 오늘 날짜만 선택 ({today_str})", key=f"{prefix}_today_filter")
         
@@ -326,11 +353,9 @@ def render_sidebar(prefix):
             for f in get_txt_files(path):
                 all_files.append({"path": f"{path}/{f}", "label": f})
                 
-        # [오늘 날짜 필터] 적용
         if show_today_only:
             filtered = []
             for f in all_files:
-                # 파일명 부분만 추출해서 비교 ("["sub"] 2026-07-20_N2.txt" -> "2026-07-20_N2.txt")
                 raw_filename = f["label"].split("] ")[-1] if "] " in f["label"] else f["label"]
                 if raw_filename.startswith(today_str):
                     filtered.append(f)
@@ -363,11 +388,11 @@ def load_data(selected_files):
 # 6. UI - 학습 파트
 # ---------------------------
 def render_study_part():
-    st.header("📖 학습 파트")
+    st.header("학습 파트")
     st.caption("💡 단축키: [스페이스바] 다음 단어 / [H] 힌트 보기")
     selected_files = render_sidebar("study")
     
-    if st.button("🚀 선택한 파일로 학습 시작", use_container_width=True):
+    if st.button("선택한 파일로 학습 시작", use_container_width=True):
         if load_data(selected_files):
             st.session_state.is_studying = True
             st.session_state.study_index = 0
@@ -382,12 +407,12 @@ def render_study_part():
             st.write("---")
             c1, c2 = st.columns(2)
             with c1:
-                if st.button("다음 단어 ⏭️", use_container_width=True):
+                if st.button("다음 단어", use_container_width=True):
                     st.session_state.study_index += 1
                     st.session_state.study_show_hint = False
                     st.rerun()
             with c2:
-                if st.button("힌트 보기 💡", use_container_width=True, disabled=not has_hint):
+                if st.button("힌트 보기", use_container_width=True, disabled=not has_hint):
                     st.session_state.study_show_hint = True
                     st.rerun()
                     
@@ -403,14 +428,14 @@ def render_study_part():
                 
             st.caption(f"진행 상황: {st.session_state.study_index + 1} / {len(st.session_state.words)}")
         else:
-            st.success("🎉 모든 단어 학습을 완료했습니다!")
+            st.success("모든 단어 학습을 완료했습니다!")
 
 # ---------------------------
 # 7. UI - 연습 파트 (망각 곡선 적용)
 # ---------------------------
 def render_practice_part():
-    st.header("📝 연습 파트 (망각 곡선 적용)")
-    st.caption("💡 단축키: [스페이스바] 정답 / [H] 힌트 / [Z] 100 / [X] 60 / [C] 40 / [V] 0")
+    st.header("연습 파트 (망각 곡선 적용)")
+    st.caption("단축키: [스페이스바] 정답 / Capslock 이용시 편리 / [H] 힌트 / [Z] 100 / [X] 60 / [C] 40 / [V] 0")
     selected_files = render_sidebar("practice")
     
     c1, c2, c3 = st.columns(3)
@@ -439,11 +464,11 @@ def render_practice_part():
         st.write("---")
         btn1, btn2 = st.columns(2)
         with btn1:
-            if st.button("정답 확인 👁️", use_container_width=True):
+            if st.button("정답 확인", use_container_width=True):
                 st.session_state.practice_show_answer = True
                 st.rerun()
         with btn2:
-            if st.button("힌트 보기 💡", use_container_width=True, disabled=not has_hint):
+            if st.button("힌트 보기", use_container_width=True, disabled=not has_hint):
                 st.session_state.practice_show_hint = True
                 st.rerun()
                 
@@ -483,31 +508,28 @@ def render_practice_part():
             st.markdown(f"<div class='test-answer'>정답: {a_text}</div>", unsafe_allow_html=True)
 
     elif st.session_state.is_practicing:
-        st.success("🎉 완벽합니다! 대기열의 모든 연습을 완료했습니다.")
+        st.success("완벽합니다! 대기열의 모든 연습을 완료했습니다.")
 
 # ---------------------------
-# 8. UI - 시험 파트 (최대 문제 개수 동적 할당 및 조절기)
+# 8. UI - 시험 파트
 # ---------------------------
 def render_exam_part():
-    st.header("🎯 시험 파트")
-    st.caption("💡 단축키: [스페이스바] 정답 확인 / [Z] O 맞음 / [X] X 틀림")
+    st.header("시험 파트")
+    st.caption("단축키: [스페이스바] 정답 확인 / CapsLock 시 편리 / [Z] O 맞음 / [X] X 틀림")
     selected_files = render_sidebar("exam")
     
-    # 선택된 파일들에서 나올 수 있는 최대 단어 개수 파악
     total_words = 0
     if selected_files:
         temp = []
         for f in selected_files:
             text = get_file_content(f["path"])
             temp.extend(parse_word_text(text))
-        # 중복 제거 후 총 개수
         total_words = len({ (w["word"], w["meaning"], w["hint"]) for w in temp })
     
     if total_words > 0:
         st.write("---")
         st.subheader("⚙️ 출제 개수 설정")
         
-        # 현재 지정된 개수 불러오기 (범위 제한 포함)
         current_val = st.session_state.exam_total_count_input
         if current_val > total_words:
             current_val = total_words
@@ -592,7 +614,7 @@ def render_exam_part():
             st.markdown(f"<div class='test-answer'>정답: {a_text}</div>", unsafe_allow_html=True)
 
     elif st.session_state.is_examining:
-        st.success(f"🎊 시험 종료! 최종 성적: {st.session_state.exam_correct_count} / {st.session_state.exam_total_count}")
+        st.success(f"시험 종료! 최종 성적: {st.session_state.exam_correct_count} / {st.session_state.exam_total_count}")
 
 # ---------------------------
 # 9. UI - 단어장 파트
@@ -695,15 +717,15 @@ def main():
     
     st.title("단어 암기 프로그램")
     
-    page = st.radio("파트 이동", ["📖 학습", "📝 연습 (망각곡선 적용)", "🎯 시험", "📁 단어장 추가"], horizontal=True, label_visibility="collapsed")
+    page = st.radio("파트 이동", ["학습", "연습 (망각곡선 적용)", "시험", "단어장 추가"], horizontal=True, label_visibility="collapsed")
     
-    if page == "📖 학습":
+    if page == "학습":
         render_study_part()
-    elif page == "📝 연습 (망각곡선 적용)":
+    elif page == "연습 (망각곡선 적용)":
         render_practice_part()
-    elif page == "🎯 시험":
+    elif page == "시험":
         render_exam_part()
-    elif page == "📁 단어장 추가":
+    elif page == "단어장 추가":
         render_wordbook_part()
         
     # 페이지 하단에서 자바스크립트(단축키) 주입
