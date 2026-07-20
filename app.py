@@ -2,7 +2,9 @@ import streamlit as st
 import random
 import requests
 import base64
-from datetime import datetime
+import re
+import calendar
+from datetime import datetime, date, timedelta
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -21,12 +23,8 @@ st.set_page_config(
 # Session State
 # ---------------------------
 def init_session_state():
-    """세션 동안 유지할 상태값들을 초기화합니다.
+    now = datetime.now()
 
-    Streamlit은 위젯을 누를 때마다 스크립트를 다시 실행하므로,
-    학습 진행 상태를 유지하려면 st.session_state에 저장해야 합니다.
-    이 상태는 같은 접속 세션 동안 유지되고, 새로고침/탭 종료 시 초기화됩니다.
-    """
     defaults = {
         "words": [],
         "study_index": 0,
@@ -54,9 +52,37 @@ def init_session_state():
         "exam_display_side": 0,
         "exam_total_count_input": 10,
 
-        # 모바일 표시 크기 상태
-        "mobile_font_scale": 1.0,   # 0.9 ~ 1.4
-        "mobile_button_scale": 1.0, # 0.9 ~ 1.4
+        "mobile_font_scale": 1.0,
+        "mobile_button_scale": 1.0,
+        "mobile_big_button_mode": False,
+
+        "selected_files_study": [],
+        "selected_files_practice": [],
+        "selected_files_exam": [],
+
+        "selected_required_files_study": [],
+        "selected_required_files_practice": [],
+        "selected_required_files_exam": [],
+
+        "selected_date_files_study": [],
+        "selected_date_files_practice": [],
+        "selected_date_files_exam": [],
+
+        "calendar_year_study": now.year,
+        "calendar_month_study": now.month,
+        "calendar_selected_dates_study": [],
+
+        "calendar_year_practice": now.year,
+        "calendar_month_practice": now.month,
+        "calendar_selected_dates_practice": [],
+
+        "calendar_year_exam": now.year,
+        "calendar_month_exam": now.month,
+        "calendar_selected_dates_exam": [],
+
+        "word_order_study": "파일 순서 유지",
+        "word_order_practice": "파일 순서 유지",
+        "word_order_exam": "파일 순서 유지",
     }
 
     for key, value in defaults.items():
@@ -68,8 +94,8 @@ def init_session_state():
 # Mobile accessibility UI
 # ---------------------------
 def increase_mobile_scale():
-    st.session_state.mobile_font_scale = min(1.4, round(st.session_state.mobile_font_scale + 0.1, 1))
-    st.session_state.mobile_button_scale = min(1.4, round(st.session_state.mobile_button_scale + 0.1, 1))
+    st.session_state.mobile_font_scale = min(1.5, round(st.session_state.mobile_font_scale + 0.1, 1))
+    st.session_state.mobile_button_scale = min(1.6, round(st.session_state.mobile_button_scale + 0.1, 1))
 
 
 def decrease_mobile_scale():
@@ -80,16 +106,21 @@ def decrease_mobile_scale():
 def reset_mobile_scale():
     st.session_state.mobile_font_scale = 1.0
     st.session_state.mobile_button_scale = 1.0
+    st.session_state.mobile_big_button_mode = False
+
+
+def toggle_big_button_mode():
+    st.session_state.mobile_big_button_mode = not st.session_state.mobile_big_button_mode
 
 
 def render_mobile_toolbar():
-    """상단 모바일 접근성 도구 막대.
-
-    transform scale 대신 모바일에서만 폰트와 버튼 크기를 키우는 CSS를 사용합니다.
-    이 방식이 레이아웃 깨짐이 적고 더 자연스럽습니다.
-    """
     font_scale = st.session_state.mobile_font_scale
     button_scale = st.session_state.mobile_button_scale
+    big_button_mode = st.session_state.mobile_big_button_mode
+
+    if big_button_mode:
+        button_scale = max(button_scale, 1.35)
+        font_scale = max(font_scale, 1.1)
 
     base_font = 16 * font_scale
     small_font = 14 * font_scale
@@ -134,6 +165,8 @@ def render_mobile_toolbar():
                 font-size: {question_font}px !important;
                 text-align: center;
                 padding: 20px;
+                line-height: 1.5;
+                word-break: keep-all;
             }}
 
             .practice-answer {{
@@ -141,12 +174,16 @@ def render_mobile_toolbar():
                 text-align: center;
                 color: gray;
                 padding: 10px;
+                line-height: 1.5;
+                word-break: keep-all;
             }}
 
             .exam-question {{
                 font-size: {exam_question_font}px !important;
                 text-align: center;
                 padding: 28px;
+                line-height: 1.5;
+                word-break: keep-all;
             }}
 
             .exam-answer {{
@@ -154,14 +191,18 @@ def render_mobile_toolbar():
                 text-align: center;
                 color: gray;
                 padding: 12px;
+                line-height: 1.5;
+                word-break: keep-all;
             }}
 
             div[data-testid="stButton"] > button,
             .stFormSubmitButton > button {{
                 min-height: {button_height}px !important;
                 font-size: {button_font}px !important;
-                font-weight: 600 !important;
-                border-radius: 10px !important;
+                font-weight: 700 !important;
+                border-radius: 12px !important;
+                padding-top: 0.6rem !important;
+                padding-bottom: 0.6rem !important;
             }}
 
             .stFormSubmitButton > button p {{
@@ -185,7 +226,7 @@ def render_mobile_toolbar():
         unsafe_allow_html=True,
     )
 
-    top1, top2, top3, top4 = st.columns([1, 1, 1, 2])
+    top1, top2, top3, top4, top5 = st.columns([1, 1, 1, 1.2, 2])
     with top1:
         st.button("글자 크게", on_click=increase_mobile_scale, use_container_width=True)
     with top2:
@@ -193,12 +234,15 @@ def render_mobile_toolbar():
     with top3:
         st.button("기본 크기", on_click=reset_mobile_scale, use_container_width=True)
     with top4:
+        st.button("큰 버튼 모드", on_click=toggle_big_button_mode, use_container_width=True)
+    with top5:
+        mode_text = "켜짐" if st.session_state.mobile_big_button_mode else "꺼짐"
         st.caption(
-            f"모바일 크기: 글자 {int(font_scale * 100)}% / 버튼 {int(button_scale * 100)}%"
+            f"모바일: 글자 {int(font_scale * 100)}% / 버튼 {int(button_scale * 100)}% / 큰 버튼 {mode_text}"
         )
 
     st.markdown(
-        "<div class='mobile-caption'>모바일에서 글씨나 버튼이 작게 보이면 위 버튼으로 조절하세요.</div>",
+        "<div class='mobile-caption'>모바일에서 손가락으로 누르기 쉽게 큰 버튼 모드를 켤 수 있습니다.</div>",
         unsafe_allow_html=True
     )
 
@@ -207,19 +251,6 @@ def render_mobile_toolbar():
 # Word parsing
 # ---------------------------
 def parse_word_text(text):
-    """빈 줄 기준 블록 파싱.
-
-    지원 형식 1)
-    단어
-    뜻
-    힌트 1
-    힌트 2
-
-    지원 형식 2)
-    단어: 뜻
-    힌트 1
-    힌트 2
-    """
     normalized_text = text.replace("\r\n", "\n").replace("：", ":")
     lines = normalized_text.split("\n")
 
@@ -270,7 +301,6 @@ def parse_word_text(text):
 
 
 def parse_words_with_validation(text):
-    """단어장 업로드/저장 전 형식 검사용 파서입니다."""
     normalized_text = text.replace("\r\n", "\n").replace("：", ":")
     lines = normalized_text.split("\n")
 
@@ -363,12 +393,141 @@ def make_manual_filename_from_title(full_title):
     if not safe_title.lower().endswith(".txt"):
         safe_title = f"{safe_title}.txt"
 
-    return safe_title
+    return safe_name_with_iso_prefix(safe_title)
+
+
+def safe_name_with_iso_prefix(file_name):
+    name = file_name.strip()
+    if not name.lower().endswith(".txt"):
+        name = f"{name}.txt"
+    return name
 
 
 def get_default_manual_title_prefix():
     korea_now = datetime.now(ZoneInfo("Asia/Seoul"))
-    return korea_now.strftime("%Y.%m.%d_%H.%M_")
+    return korea_now.strftime("%Y-%m-%d_")
+
+
+def extract_iso_date_from_filename(filename):
+    name = filename.rsplit("/", 1)[-1]
+    match = re.search(r"(20\d{2}-\d{2}-\d{2})", name)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    return None
+
+
+def is_dated_file(filename):
+    return extract_iso_date_from_filename(filename) is not None
+
+
+def split_required_and_dated_files(files):
+    required_files = []
+    dated_files = []
+
+    for f in files:
+        if is_dated_file(f):
+            dated_files.append(f)
+        else:
+            required_files.append(f)
+
+    required_files.sort()
+    dated_files.sort()
+    return required_files, dated_files
+
+
+def file_display_label(name):
+    dt = extract_iso_date_from_filename(name)
+    if dt:
+        return f"{name}  ({dt.isoformat()})"
+    return name
+
+
+def deduplicate_words(words):
+    seen = set()
+    result = []
+
+    for item in words:
+        key = (
+            item.get("word", "").strip(),
+            item.get("meaning", "").strip(),
+            item.get("hint", "").strip()
+        )
+        if key not in seen:
+            seen.add(key)
+            result.append(item)
+
+    return result
+
+
+def monday_of_week(target_date):
+    return target_date - timedelta(days=target_date.weekday())
+
+
+def sunday_of_week(target_date):
+    return monday_of_week(target_date) + timedelta(days=6)
+
+
+def get_this_week_range():
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+    return monday_of_week(today), sunday_of_week(today)
+
+
+def get_last_week_range():
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+    this_monday = monday_of_week(today)
+    last_sunday = this_monday - timedelta(days=1)
+    last_monday = last_sunday - timedelta(days=6)
+    return last_monday, last_sunday
+
+
+def get_this_month_range():
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+    start = date(today.year, today.month, 1)
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    end = date(today.year, today.month, last_day)
+    return start, end
+
+
+def filter_dated_files_by_range(dated_files, start_date, end_date):
+    result = []
+    for f in dated_files:
+        dt = extract_iso_date_from_filename(f)
+        if dt and start_date <= dt <= end_date:
+            result.append(f)
+    return sorted(result)
+
+
+def apply_word_order(words, selected_files, order_mode):
+    if order_mode == "랜덤":
+        copied = list(words)
+        random.shuffle(copied)
+        return copied
+
+    if order_mode == "최신 날짜 우선":
+        file_date_map = {}
+        for f in selected_files:
+            file_date_map[f] = extract_iso_date_from_filename(f)
+
+        dated_files = [f for f in selected_files if file_date_map.get(f) is not None]
+        undated_files = [f for f in selected_files if file_date_map.get(f) is None]
+
+        dated_files.sort(key=lambda x: file_date_map[x], reverse=True)
+        new_file_order = undated_files + dated_files
+
+        ordered_words = []
+        for f in new_file_order:
+            source_words = []
+            try:
+                pass
+            except Exception:
+                pass
+
+        return words
+
+    return words
 
 
 # ---------------------------
@@ -395,50 +554,12 @@ def encode_github_path(path):
 
 @st.cache_data(ttl=120, max_entries=256, show_spinner=False)
 def github_get_contents_cached(path):
-    """GitHub contents API 응답 캐시.
-
-    반복적인 폴더/파일 조회를 줄여서 여러 사용자가 접속해도
-    불필요한 API 호출이 많아지지 않도록 합니다.
-    """
     owner, repo, branch = get_repo_info()
     encoded_path = encode_github_path(path)
     encoded_branch = quote(branch, safe="")
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{encoded_path}?ref={encoded_branch}"
     response = requests.get(url, headers=get_github_headers(), timeout=30)
     return response.status_code, response.json() if response.content else {}
-
-
-@st.cache_data(ttl=120, max_entries=64, show_spinner=False)
-def get_github_all_folders_recursive(base_path="word_list"):
-    collected = []
-
-    def walk_folder(path):
-        status_code, data = github_get_contents_cached(path)
-
-        if status_code != 200:
-            raise Exception(f"{path} 조회 실패 (상태 코드: {status_code})")
-
-        if not isinstance(data, list):
-            return
-
-        for item in data:
-            if item.get("type") == "dir":
-                folder_path = item.get("path")
-                collected.append(folder_path)
-                walk_folder(folder_path)
-
-    walk_folder(base_path)
-    collected.sort()
-    return collected
-
-
-@st.cache_data(ttl=120, max_entries=64, show_spinner=False)
-def get_github_folders(base_path="word_list"):
-    try:
-        folders = get_github_all_folders_recursive(base_path)
-        return folders, None
-    except Exception as e:
-        return [], f"GitHub 폴더 목록 조회 중 오류가 발생했습니다: {e}"
 
 
 @st.cache_data(ttl=120, max_entries=256, show_spinner=False)
@@ -499,10 +620,358 @@ def upload_text_to_github(folder_path, file_name, text_content):
 
 
 # ---------------------------
-# State helpers
+# File loading / merging
+# ---------------------------
+def load_words_from_multiple_github_files(selected_folder_list, selected_files_with_folder, order_mode):
+    merged_words = []
+
+    if order_mode == "최신 날짜 우선":
+        sorted_items = sorted(
+            selected_files_with_folder,
+            key=lambda x: (
+                extract_iso_date_from_filename(x["file"]) is None,
+                extract_iso_date_from_filename(x["file"]) or date(1900, 1, 1)
+            ),
+            reverse=True
+        )
+    else:
+        sorted_items = list(selected_files_with_folder)
+
+    for item in sorted_items:
+        folder_path = item["folder"]
+        file_name = item["file"]
+        repo_file_path = f"{folder_path}/{file_name}"
+        text = get_github_file_text(repo_file_path)
+        parsed = parse_word_text(text)
+        merged_words.extend(parsed)
+
+    merged_words = deduplicate_words(merged_words)
+
+    if order_mode == "랜덤":
+        random.shuffle(merged_words)
+
+    return merged_words
+
+
+# ---------------------------
+# Selector helpers
+# ---------------------------
+def sync_combined_selection(prefix):
+    required_key = f"selected_required_files_{prefix}"
+    date_key = f"selected_date_files_{prefix}"
+    combined_key = f"selected_files_{prefix}"
+
+    combined = list(st.session_state[required_key]) + list(st.session_state[date_key])
+    st.session_state[combined_key] = sorted(set(combined))
+
+
+def clear_all_selection(prefix):
+    st.session_state[f"selected_required_files_{prefix}"] = []
+    st.session_state[f"selected_date_files_{prefix}"] = []
+    st.session_state[f"selected_files_{prefix}"] = []
+    st.session_state[f"calendar_selected_dates_{prefix}"] = []
+
+
+def select_all_required_files(prefix, files):
+    st.session_state[f"selected_required_files_{prefix}"] = list(files)
+    sync_combined_selection(prefix)
+
+
+def clear_required_files(prefix):
+    st.session_state[f"selected_required_files_{prefix}"] = []
+    sync_combined_selection(prefix)
+
+
+def select_all_date_files(prefix, files):
+    st.session_state[f"selected_date_files_{prefix}"] = list(files)
+    sync_combined_selection(prefix)
+
+
+def clear_date_files(prefix):
+    st.session_state[f"selected_date_files_{prefix}"] = []
+    st.session_state[f"calendar_selected_dates_{prefix}"] = []
+    sync_combined_selection(prefix)
+
+
+def render_quick_date_buttons(dated_files, prefix):
+    selected_dates_key = f"calendar_selected_dates_{prefix}"
+
+    q1, q2, q3, q4 = st.columns(4)
+
+    with q1:
+        if st.button("이번 주", key=f"{prefix}_quick_this_week", use_container_width=True):
+            start_d, end_d = get_this_week_range()
+            files = filter_dated_files_by_range(dated_files, start_d, end_d)
+            st.session_state[f"selected_date_files_{prefix}"] = files
+            st.session_state[selected_dates_key] = sorted(
+                list({extract_iso_date_from_filename(f) for f in files if extract_iso_date_from_filename(f)})
+            )
+            sync_combined_selection(prefix)
+
+    with q2:
+        if st.button("지난 주", key=f"{prefix}_quick_last_week", use_container_width=True):
+            start_d, end_d = get_last_week_range()
+            files = filter_dated_files_by_range(dated_files, start_d, end_d)
+            st.session_state[f"selected_date_files_{prefix}"] = files
+            st.session_state[selected_dates_key] = sorted(
+                list({extract_iso_date_from_filename(f) for f in files if extract_iso_date_from_filename(f)})
+            )
+            sync_combined_selection(prefix)
+
+    with q3:
+        if st.button("이번 달", key=f"{prefix}_quick_this_month", use_container_width=True):
+            start_d, end_d = get_this_month_range()
+            files = filter_dated_files_by_range(dated_files, start_d, end_d)
+            st.session_state[f"selected_date_files_{prefix}"] = files
+            st.session_state[selected_dates_key] = sorted(
+                list({extract_iso_date_from_filename(f) for f in files if extract_iso_date_from_filename(f)})
+            )
+            sync_combined_selection(prefix)
+
+    with q4:
+        if st.button("빠른 선택 해제", key=f"{prefix}_quick_clear", use_container_width=True):
+            st.session_state[f"selected_date_files_{prefix}"] = []
+            st.session_state[selected_dates_key] = []
+            sync_combined_selection(prefix)
+
+
+def render_calendar_selector(dated_files, prefix):
+    year_key = f"calendar_year_{prefix}"
+    month_key = f"calendar_month_{prefix}"
+    selected_dates_key = f"calendar_selected_dates_{prefix}"
+
+    file_date_map = {}
+    all_dates = []
+
+    for f in dated_files:
+        dt = extract_iso_date_from_filename(f)
+        if dt:
+            file_date_map.setdefault(dt, []).append(f)
+            all_dates.append(dt)
+
+    if not all_dates:
+        st.info("날짜 파일이 없어 캘린더를 표시하지 않습니다.")
+        return []
+
+    available_years = sorted({d.year for d in all_dates})
+    if st.session_state[year_key] not in available_years:
+        st.session_state[year_key] = available_years[0]
+
+    months_for_year = sorted({d.month for d in all_dates if d.year == st.session_state[year_key]})
+    if months_for_year and st.session_state[month_key] not in months_for_year:
+        st.session_state[month_key] = months_for_year[0]
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.selectbox("연도", available_years, key=year_key)
+    with c2:
+        months_for_year = sorted({d.month for d in all_dates if d.year == st.session_state[year_key]})
+        st.selectbox("월", months_for_year, key=month_key)
+
+    year = st.session_state[year_key]
+    month = st.session_state[month_key]
+
+    st.write("#### 날짜 선택")
+
+    month_dates = sorted([d for d in all_dates if d.year == year and d.month == month])
+
+    weekday_names = ["월", "화", "수", "목", "금", "토", "일"]
+    head_cols = st.columns(7)
+    for idx, wd in enumerate(weekday_names):
+        with head_cols[idx]:
+            st.markdown(f"**{wd}**")
+
+    cal = calendar.monthcalendar(year, month)
+
+    for week in cal:
+        cols = st.columns(7)
+        for i, day in enumerate(week):
+            with cols[i]:
+                if day == 0:
+                    st.write("")
+                else:
+                    current_date = date(year, month, day)
+                    has_file = current_date in file_date_map
+                    checked = current_date in st.session_state[selected_dates_key]
+
+                    if has_file:
+                        new_value = st.checkbox(
+                            f"{day}",
+                            value=checked,
+                            key=f"{prefix}_calendar_day_{year}_{month}_{day}"
+                        )
+                        if new_value and current_date not in st.session_state[selected_dates_key]:
+                            st.session_state[selected_dates_key].append(current_date)
+                        elif (not new_value) and current_date in st.session_state[selected_dates_key]:
+                            st.session_state[selected_dates_key].remove(current_date)
+                    else:
+                        st.markdown(f"<span style='color:#bbb'>{day}</span>", unsafe_allow_html=True)
+
+    btn1, btn2 = st.columns(2)
+    with btn1:
+        if st.button("이 달 전체 선택", key=f"{prefix}_select_month_btn", use_container_width=True):
+            st.session_state[selected_dates_key] = month_dates
+    with btn2:
+        if st.button("날짜 선택 해제", key=f"{prefix}_clear_month_btn", use_container_width=True):
+            st.session_state[selected_dates_key] = []
+
+    selected_files_by_calendar = []
+    for dt in st.session_state[selected_dates_key]:
+        selected_files_by_calendar.extend(file_date_map.get(dt, []))
+
+    return sorted(set(selected_files_by_calendar))
+
+
+def get_selected_folder_list(main_category, japanese_mode, selected_level_folders):
+    if main_category == "IT":
+        return ["word_list/IT"]
+
+    if main_category == "Japanese":
+        if japanese_mode == "단일 등급":
+            return [f"word_list/Japanese/{selected_level_folders[0]}"] if selected_level_folders else []
+        return [f"word_list/Japanese/{lv}" for lv in selected_level_folders]
+
+    return []
+
+
+def get_merged_txt_files_with_folder(folder_list):
+    merged = []
+    errors = []
+
+    for folder_path in folder_list:
+        files, err = get_github_txt_files(folder_path)
+        if err:
+            errors.append(err)
+        else:
+            for f in files:
+                merged.append({
+                    "folder": folder_path,
+                    "file": f,
+                    "label": f"[{folder_path.split('/')[-1]}] {f}"
+                })
+
+    return merged, errors
+
+
+def render_file_selector_section(folder_list, prefix, main_category):
+    merged_items, errors = get_merged_txt_files_with_folder(folder_list)
+
+    if errors:
+        for err in errors:
+            st.error(err)
+
+    if not merged_items:
+        st.warning("선택한 폴더에 txt 파일이 없습니다.")
+        return []
+
+    file_names = [item["label"] for item in merged_items]
+    label_to_item = {item["label"]: item for item in merged_items}
+
+    raw_files = [item["file"] for item in merged_items]
+    required_files, dated_files = split_required_and_dated_files(raw_files)
+
+    required_labels = [item["label"] for item in merged_items if item["file"] in required_files]
+    dated_labels = [item["label"] for item in merged_items if item["file"] in dated_files]
+
+    st.write("### 파일 선택")
+
+    top1, top2 = st.columns(2)
+    with top1:
+        if st.button("전체 선택 해제", key=f"{prefix}_clear_all_btn", use_container_width=True):
+            clear_all_selection(prefix)
+    with top2:
+        st.caption(f"전체 파일 수: {len(merged_items)}개")
+
+    if main_category == "Japanese":
+        st.write("#### 필수 파일")
+        r1, r2 = st.columns(2)
+        with r1:
+            if st.button("필수 파일 전체 선택", key=f"{prefix}_required_all_btn", use_container_width=True):
+                st.session_state[f"selected_required_files_{prefix}"] = required_labels
+                sync_combined_selection(prefix)
+        with r2:
+            if st.button("필수 파일 해제", key=f"{prefix}_required_clear_btn", use_container_width=True):
+                st.session_state[f"selected_required_files_{prefix}"] = []
+                sync_combined_selection(prefix)
+
+        st.multiselect(
+            "날짜 없는 필수 단어 파일 선택",
+            options=required_labels,
+            key=f"selected_required_files_{prefix}"
+        )
+
+        st.write("#### 날짜 파일")
+        d1, d2 = st.columns(2)
+        with d1:
+            if st.button("날짜 파일 전체 선택", key=f"{prefix}_dated_all_btn", use_container_width=True):
+                st.session_state[f"selected_date_files_{prefix}"] = dated_labels
+                sync_combined_selection(prefix)
+        with d2:
+            if st.button("날짜 파일 해제", key=f"{prefix}_dated_clear_btn", use_container_width=True):
+                st.session_state[f"selected_date_files_{prefix}"] = []
+                st.session_state[f"calendar_selected_dates_{prefix}"] = []
+                sync_combined_selection(prefix)
+
+        st.multiselect(
+            "날짜 파일 직접 선택",
+            options=dated_labels,
+            key=f"selected_date_files_{prefix}"
+        )
+
+        with st.expander("빠른 날짜 선택 / 캘린더"):
+            dated_real_files = [label_to_item[label]["file"] for label in dated_labels]
+            render_quick_date_buttons(dated_real_files, prefix)
+            calendar_selected_files = render_calendar_selector(dated_real_files, prefix)
+
+            if st.button("캘린더 선택 반영", key=f"{prefix}_calendar_apply_btn", use_container_width=True):
+                applied_labels = []
+                selected_set = set(calendar_selected_files)
+                for label in dated_labels:
+                    if label_to_item[label]["file"] in selected_set:
+                        applied_labels.append(label)
+                st.session_state[f"selected_date_files_{prefix}"] = applied_labels
+                sync_combined_selection(prefix)
+                st.success(f"날짜 파일 {len(applied_labels)}개를 반영했습니다.")
+
+    else:
+        st.write("#### 파일 선택")
+        a1, a2 = st.columns(2)
+        with a1:
+            if st.button("전체 파일 선택", key=f"{prefix}_it_all_btn", use_container_width=True):
+                st.session_state[f"selected_required_files_{prefix}"] = file_names
+                st.session_state[f"selected_date_files_{prefix}"] = []
+                sync_combined_selection(prefix)
+        with a2:
+            if st.button("파일 선택 해제", key=f"{prefix}_it_clear_btn", use_container_width=True):
+                clear_all_selection(prefix)
+
+        st.multiselect(
+            "학습할 파일들 선택",
+            options=file_names,
+            key=f"selected_required_files_{prefix}"
+        )
+        st.session_state[f"selected_date_files_{prefix}"] = []
+
+    sync_combined_selection(prefix)
+
+    selected_now_labels = st.session_state[f"selected_files_{prefix}"]
+    selected_items = [label_to_item[label] for label in selected_now_labels if label in label_to_item]
+
+    if selected_items:
+        st.caption(f"현재 선택된 파일 수: {len(selected_items)}개")
+        with st.expander("선택된 파일 보기"):
+            for item in selected_items:
+                st.write(f"- {item['label']}")
+    else:
+        st.caption("현재 선택된 파일이 없습니다.")
+
+    return selected_items
+
+
+# ---------------------------
+# Study / Practice / Exam helpers
 # ---------------------------
 def load_first_practice_word():
-    """연습 시작 시 첫 문제를 가져옵니다."""
     if len(st.session_state.practice_queue) > 0:
         st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
         set_next_practice_display_side()
@@ -511,10 +980,6 @@ def load_first_practice_word():
 
 
 def start_practice(mode):
-    """연습 시작 공통 함수.
-
-    중복 로직을 줄여 유지보수를 쉽게 합니다.
-    """
     if len(st.session_state.words) == 0:
         st.warning("먼저 파일을 선택해 주세요.")
         return
@@ -531,7 +996,6 @@ def start_practice(mode):
 
 
 def reset_exam_state():
-    """시험 상태 초기화."""
     st.session_state.is_examining = False
     st.session_state.exam_mode = None
     st.session_state.exam_queue = []
@@ -543,9 +1007,6 @@ def reset_exam_state():
     st.session_state.exam_display_side = 0
 
 
-# ---------------------------
-# Study / Practice / Exam logic
-# ---------------------------
 def load_next_exam_question():
     if len(st.session_state.exam_queue) > 0:
         st.session_state.current_exam_word = st.session_state.exam_queue.pop(0)
@@ -601,7 +1062,6 @@ def set_next_practice_display_side():
 
 
 def move_to_next_practice_word():
-    """현재 문제를 처리한 뒤 다음 문제로 이동합니다."""
     st.session_state.show_answer = False
     st.session_state.practice_show_hint = False
 
@@ -629,7 +1089,6 @@ def get_random_position_by_percent(n, start_ratio, end_ratio):
 
 
 def handle_practice_score(level):
-    """연습 평가 결과에 따라 단어를 큐 뒤쪽 적절한 위치에 재삽입합니다."""
     current_word = st.session_state.current_practice_word
     if current_word is None:
         return
@@ -651,10 +1110,70 @@ def handle_practice_score(level):
     move_to_next_practice_word()
 
 
-def load_words_from_github_file(selected_folder, selected_file):
-    repo_file_path = f"{selected_folder}/{selected_file}"
-    text = get_github_file_text(repo_file_path)
-    return parse_word_text(text)
+# ---------------------------
+# Folder selector
+# ---------------------------
+def get_main_category_options():
+    return ["IT", "Japanese"]
+
+
+def get_japanese_level_options():
+    return ["N2", "N3", "N4~N5"]
+
+
+def render_folder_picker(prefix, title_text):
+    st.write(f"### {title_text}")
+
+    main_category = st.selectbox(
+        "대분류 선택",
+        get_main_category_options(),
+        key=f"{prefix}_main_category"
+    )
+
+    folder_list = []
+    if main_category == "IT":
+        folder_list = ["word_list/IT"]
+    else:
+        mode = st.radio(
+            "일본어 폴더 선택 방식",
+            ["단일 등급", "통합 선택"],
+            key=f"{prefix}_japanese_mode",
+            horizontal=True
+        )
+
+        if mode == "단일 등급":
+            selected_level = st.selectbox(
+                "일본어 등급 선택",
+                get_japanese_level_options(),
+                key=f"{prefix}_japanese_level_single"
+            )
+            folder_list = [f"word_list/Japanese/{selected_level}"]
+        else:
+            selected_levels = st.multiselect(
+                "여러 등급 폴더 선택",
+                options=get_japanese_level_options(),
+                default=get_japanese_level_options(),
+                key=f"{prefix}_japanese_level_multi"
+            )
+            folder_list = [f"word_list/Japanese/{lv}" for lv in selected_levels]
+
+    if folder_list:
+        st.caption("선택된 폴더")
+        for fp in folder_list:
+            st.write(f"- {fp}")
+
+    return folder_list, main_category
+
+
+# ---------------------------
+# Common loader
+# ---------------------------
+def render_order_option(prefix):
+    return st.selectbox(
+        "단어 순서 옵션",
+        ["파일 순서 유지", "랜덤", "최신 날짜 우선"],
+        key=f"word_order_{prefix}"
+    )
 
 
 # ---------------------------
@@ -663,41 +1182,28 @@ def load_words_from_github_file(selected_folder, selected_file):
 def render_study_part():
     st.header("학습 파트")
 
-    folders, folder_error = get_github_folders("word_list")
-
-    if folder_error:
-        st.error(folder_error)
+    folder_list, main_category = render_folder_picker("study", "학습할 폴더 선택")
+    if not folder_list:
         return
 
-    if not folders:
-        st.warning("GitHub의 word_list 아래에 선택 가능한 폴더가 없습니다.")
-        return
-
-    selected_folder = st.selectbox("학습할 폴더를 선택하세요", folders, key="study_folder_select")
-
-    txt_files, files_error = get_github_txt_files(selected_folder)
-    if files_error:
-        st.error(files_error)
-        return
-
-    if not txt_files:
-        st.warning("선택한 폴더에 txt 파일이 없습니다.")
-        return
-
-    selected_file = st.selectbox("학습할 텍스트 파일을 선택하세요", txt_files, key="study_file_select")
+    selected_items = render_file_selector_section(folder_list, "study", main_category)
+    order_mode = render_order_option("study")
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("파일 선택하기", use_container_width=True):
+        if st.button("선택한 파일 불러오기", use_container_width=True):
             try:
-                st.session_state.words = load_words_from_github_file(selected_folder, selected_file)
-                st.session_state.study_index = 0
-                st.session_state.is_studying = False
-                st.session_state.study_show_hint = False
-                st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
+                if not selected_items:
+                    st.warning("먼저 파일을 하나 이상 선택해 주세요.")
+                else:
+                    st.session_state.words = load_words_from_multiple_github_files(folder_list, selected_items, order_mode)
+                    st.session_state.study_index = 0
+                    st.session_state.is_studying = False
+                    st.session_state.study_show_hint = False
+                    st.success(f"{len(selected_items)}개 파일에서 {len(st.session_state.words)}개의 단어를 불러왔습니다!")
             except Exception as e:
-                st.error(f"파일 선택 중 오류가 발생했습니다: {e}")
+                st.error(f"파일 불러오기 중 오류가 발생했습니다: {e}")
 
     with col2:
         if st.button("랜덤으로 섞기", use_container_width=True):
@@ -707,7 +1213,7 @@ def render_study_part():
                 st.session_state.study_show_hint = False
                 st.success("단어 목록이 랜덤으로 섞였습니다!")
             else:
-                st.warning("먼저 파일을 선택해 주세요.")
+                st.warning("먼저 파일을 불러와 주세요.")
 
     with col3:
         if st.button("학습하기", use_container_width=True):
@@ -716,7 +1222,7 @@ def render_study_part():
                 st.session_state.study_index = 0
                 st.session_state.study_show_hint = False
             else:
-                st.warning("먼저 파일을 선택해 주세요.")
+                st.warning("먼저 파일을 불러와 주세요.")
 
     if len(st.session_state.words) > 0 and st.session_state.is_studying:
         st.write("---")
@@ -759,44 +1265,31 @@ def render_study_part():
 def render_practice_part():
     st.header("연습 파트")
 
-    folders, folder_error = get_github_folders("word_list")
-
-    if folder_error:
-        st.error(folder_error)
+    folder_list, main_category = render_folder_picker("practice", "연습할 폴더 선택")
+    if not folder_list:
         return
 
-    if not folders:
-        st.warning("GitHub의 word_list 아래에 선택 가능한 폴더가 없습니다.")
-        return
-
-    selected_folder = st.selectbox("연습할 폴더를 선택하세요", folders, key="practice_folder_select")
-
-    txt_files, files_error = get_github_txt_files(selected_folder)
-    if files_error:
-        st.error(files_error)
-        return
-
-    if not txt_files:
-        st.warning("선택한 폴더에 txt 파일이 없습니다.")
-        return
-
-    selected_file = st.selectbox("파일을 선택하세요.", txt_files, key="practice_file_select")
+    selected_items = render_file_selector_section(folder_list, "practice", main_category)
+    order_mode = render_order_option("practice")
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("파일 선택하기", key="practice_load", use_container_width=True):
+        if st.button("선택한 파일 불러오기", key="practice_load", use_container_width=True):
             try:
-                st.session_state.words = load_words_from_github_file(selected_folder, selected_file)
-                st.session_state.practice_queue = list(st.session_state.words)
-                st.session_state.is_practicing = False
-                st.session_state.current_practice_word = None
-                st.session_state.show_answer = False
-                st.session_state.practice_show_hint = False
-                st.session_state.practice_mode = "random"
-                st.success(f"'{selected_file}'에서 {len(st.session_state.words)}개의 단어를 성공적으로 불러왔습니다!")
+                if not selected_items:
+                    st.warning("먼저 파일을 하나 이상 선택해 주세요.")
+                else:
+                    st.session_state.words = load_words_from_multiple_github_files(folder_list, selected_items, order_mode)
+                    st.session_state.practice_queue = list(st.session_state.words)
+                    st.session_state.is_practicing = False
+                    st.session_state.current_practice_word = None
+                    st.session_state.show_answer = False
+                    st.session_state.practice_show_hint = False
+                    st.session_state.practice_mode = "random"
+                    st.success(f"{len(selected_items)}개 파일에서 {len(st.session_state.words)}개의 단어를 불러왔습니다!")
             except Exception as e:
-                st.error(f"파일 선택 중 오류가 발생했습니다: {e}")
+                st.error(f"파일 불러오기 중 오류가 발생했습니다: {e}")
 
     with col2:
         if st.button("단어 랜덤으로 섞기", use_container_width=True):
@@ -809,7 +1302,7 @@ def render_practice_part():
                 st.session_state.practice_mode = "random"
                 st.success("연습 단어가 랜덤으로 섞였습니다!")
             else:
-                st.warning("먼저 파일을 선택해 주세요.")
+                st.warning("먼저 파일을 불러와 주세요.")
 
     with col3:
         if st.button("연습 준비", use_container_width=True):
@@ -823,7 +1316,7 @@ def render_practice_part():
                 st.session_state.practice_show_hint = False
                 st.success("연습 준비가 완료되었습니다. 아래에서 연습 방식을 선택해 주세요.")
             else:
-                st.warning("먼저 파일을 선택해 주세요.")
+                st.warning("먼저 파일을 불러와 주세요.")
 
     st.write("")
     mode_col1, mode_col2, mode_col3 = st.columns(3)
@@ -903,45 +1396,32 @@ def render_practice_part():
 def render_exam_part():
     st.header("시험 파트")
 
-    folders, folder_error = get_github_folders("word_list")
-
-    if folder_error:
-        st.error(folder_error)
+    folder_list, main_category = render_folder_picker("exam", "시험할 폴더 선택")
+    if not folder_list:
         return
 
-    if not folders:
-        st.warning("GitHub의 word_list 아래에 선택 가능한 폴더가 없습니다.")
-        return
-
-    selected_folder = st.selectbox("시험할 폴더를 선택하세요", folders, key="exam_folder_select")
-
-    txt_files, files_error = get_github_txt_files(selected_folder)
-    if files_error:
-        st.error(files_error)
-        return
-
-    if not txt_files:
-        st.warning("선택한 폴더에 txt 파일이 없습니다.")
-        return
-
-    selected_file_exam = st.selectbox("시험할 파일을 선택하세요", txt_files, key="exam_file_select")
+    selected_items = render_file_selector_section(folder_list, "exam", main_category)
+    order_mode = render_order_option("exam")
 
     top_col1, top_col2, top_col3, top_col4 = st.columns([1.2, 1.2, 1.2, 1.6], vertical_alignment="bottom")
 
     with top_col1:
-        if st.button("파일 선택하기", key="exam_load", use_container_width=True):
+        if st.button("선택한 파일 불러오기", key="exam_load", use_container_width=True):
             try:
-                loaded_words = load_words_from_github_file(selected_folder, selected_file_exam)
-                st.session_state.words = loaded_words
-                st.session_state.exam_source_words = list(loaded_words)
-                reset_exam_state()
-                st.session_state.exam_total_count_input = min(
-                    max(1, len(st.session_state.exam_source_words)),
-                    st.session_state.exam_total_count_input
-                )
-                st.success(f"'{selected_file_exam}'에서 {len(loaded_words)}개의 단어를 성공적으로 불러왔습니다!")
+                if not selected_items:
+                    st.warning("먼저 파일을 하나 이상 선택해 주세요.")
+                else:
+                    loaded_words = load_words_from_multiple_github_files(folder_list, selected_items, order_mode)
+                    st.session_state.words = loaded_words
+                    st.session_state.exam_source_words = list(loaded_words)
+                    reset_exam_state()
+                    st.session_state.exam_total_count_input = min(
+                        max(1, len(st.session_state.exam_source_words)),
+                        st.session_state.exam_total_count_input
+                    )
+                    st.success(f"{len(selected_items)}개 파일에서 {len(loaded_words)}개의 단어를 불러왔습니다!")
             except Exception as e:
-                st.error(f"파일 선택 중 오류가 발생했습니다: {e}")
+                st.error(f"파일 불러오기 중 오류가 발생했습니다: {e}")
 
     with top_col2:
         if st.button("단어 랜덤으로 섞기", key="exam_shuffle", use_container_width=True):
@@ -950,7 +1430,7 @@ def render_exam_part():
                 reset_exam_state()
                 st.success("시험 단어가 랜덤으로 섞였습니다!")
             else:
-                st.warning("먼저 파일을 선택해 주세요.")
+                st.warning("먼저 파일을 불러와 주세요.")
 
     with top_col3:
         if st.button("시험 준비", key="exam_ready", use_container_width=True):
@@ -958,7 +1438,7 @@ def render_exam_part():
                 reset_exam_state()
                 st.success("시험 준비가 완료되었습니다. 아래에서 시험 방식을 선택해 주세요.")
             else:
-                st.warning("먼저 파일을 선택해 주세요.")
+                st.warning("먼저 파일을 불러와 주세요.")
 
     with top_col4:
         max_count = max(1, len(st.session_state.exam_source_words)) if len(st.session_state.exam_source_words) > 0 else 1
@@ -1062,7 +1542,7 @@ def render_exam_part():
 
 def render_wordbook_part():
     st.header("단어장 파트")
-    st.caption("사용자는 직접 txt 파일을 업로드하거나 내용을 입력해 새 단어장을 만들 수 있습니다. 삭제는 GitHub 관리자만 할 수 있습니다.")
+    st.caption("사용자는 직접 txt 파일을 업로드하거나 내용을 입력해 새 단어장을 만들 수 있습니다. 날짜 파일은 YYYY-MM-DD 형식을 권장합니다.")
 
     _, top_right = st.columns([5, 1])
 
@@ -1071,17 +1551,14 @@ def render_wordbook_part():
             clear_github_cache()
             st.success("GitHub 목록 캐시를 새로고침했습니다.")
 
-    folders, folder_error = get_github_folders("word_list")
+    folders_to_offer = [
+        "word_list/IT",
+        "word_list/Japanese/N2",
+        "word_list/Japanese/N3",
+        "word_list/Japanese/N4~N5"
+    ]
 
-    if folder_error:
-        st.error(folder_error)
-        return
-
-    if not folders:
-        st.warning("GitHub의 word_list 아래에 선택 가능한 폴더가 없습니다. 관리자에게 폴더를 먼저 만들어 달라고 요청해 주세요.")
-        return
-
-    selected_folder = st.selectbox("저장할 폴더를 선택하세요", folders, key="wordbook_folder_select")
+    selected_folder = st.selectbox("저장할 폴더를 선택하세요", folders_to_offer, key="wordbook_folder_select")
     existing_files, files_error = get_github_txt_files(selected_folder)
 
     st.write("### 현재 폴더의 기존 txt 파일 목록")
@@ -1129,13 +1606,13 @@ def render_wordbook_part():
                     st.table(parsed_words[:min(20, len(parsed_words))])
 
                 with st.form("upload_txt_form"):
-                    upload_title = st.text_input("저장할 제목을 입력하세요", placeholder="예: 정보처리기사 실기 오답노트")
+                    upload_title = st.text_input("저장할 파일명을 입력하세요", placeholder="예: 2026-07-20_일본어수업정리")
                     upload_password_input = st.text_input("업로드 비밀번호", type="password")
                     upload_submitted = st.form_submit_button("GitHub에 저장하기", use_container_width=True)
 
                     if upload_submitted:
                         if not upload_title.strip():
-                            st.warning("저장할 제목을 입력해 주세요.")
+                            st.warning("저장할 파일명을 입력해 주세요.")
                         elif len(parsed_words) == 0:
                             st.warning("저장할 정상 단어가 없습니다.")
                         elif errors:
@@ -1158,19 +1635,18 @@ def render_wordbook_part():
 
     with manual_tab:
         st.subheader("직접 입력해서 저장")
-
         default_title_prefix = get_default_manual_title_prefix()
 
         with st.form("manual_wordbook_form"):
             manual_title = st.text_input(
-                "저장할 제목을 입력하세요",
+                "저장할 파일명을 입력하세요",
                 value=default_title_prefix,
-                placeholder="예: 2026.07.17_15.11_일본어 오답"
+                placeholder="예: 2026-07-20_일본어오답"
             )
             manual_text = st.text_area(
                 "단어장을 입력하세요",
                 height=300,
-                placeholder="예시 1)\napple\n사과\n\nbanana\n바나나\n\n예시 2)\napple: 사과\nbanana: 바나나"
+                placeholder="예시 1)\napple\n사과\n힌트 여러 줄 가능\n\nbanana\n바나나\n힌트\n\n예시 2)\napple: 사과\n힌트 여러 줄 가능\nbanana: 바나나\n힌트"
             )
             manual_password_input = st.text_input("업로드 비밀번호", type="password")
             manual_submitted = st.form_submit_button("형식 검사 및 GitHub에 저장하기", use_container_width=True)
@@ -1192,9 +1668,9 @@ def render_wordbook_part():
                 st.table(parsed_words[:min(20, len(parsed_words))])
 
             if not manual_title.strip():
-                st.warning("저장할 제목을 입력해 주세요.")
+                st.warning("저장할 파일명을 입력해 주세요.")
             elif manual_title.strip() == default_title_prefix.strip():
-                st.warning("제목 뒤의 자유 내용을 입력해 주세요.")
+                st.warning("파일명 뒤의 자유 내용을 입력해 주세요.")
             elif not manual_text.strip():
                 st.warning("단어장 내용을 입력해 주세요.")
             elif len(parsed_words) == 0:
@@ -1226,7 +1702,9 @@ def main():
     render_mobile_toolbar()
 
     st.title("단어 암기 프로그램")
-    st.caption("세션이 유지되는 동안 학습/연습/시험 진행 상태가 유지됩니다. 브라우저 새로고침이나 탭 종료 시에는 초기화됩니다.")
+    st.caption(
+        "Japanese는 단일 등급 또는 N2/N3/N4~N5 통합 선택이 가능하고, 날짜 파일은 YYYY-MM-DD 형식 파일명만 빠른 선택과 캘린더에 표시됩니다."
+    )
 
     st.sidebar.title("메뉴")
     page = st.sidebar.radio("파트를 선택하세요", ["학습", "연습", "시험", "단어장"])
