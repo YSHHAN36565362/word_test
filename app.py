@@ -514,8 +514,8 @@ def render_practice_part():
 # 8. UI - 시험 파트
 # ---------------------------
 def render_exam_part():
-    st.header("🎯 시험 파트")
-    st.caption("💡 단축키: [스페이스바] 정답 확인 / [Z] O 맞음 / [X] X 틀림")
+    st.header("시험 파트")
+    st.caption("단축키: [스페이스바] 정답 확인 / CapsLock 시 편리 / [Z] O 맞음 / [X] X 틀림")
     selected_files = render_sidebar("exam")
     
     total_words = 0
@@ -614,7 +614,7 @@ def render_exam_part():
             st.markdown(f"<div class='test-answer'>정답: {a_text}</div>", unsafe_allow_html=True)
 
     elif st.session_state.is_examining:
-        st.success(f"🎊 시험 종료! 최종 성적: {st.session_state.exam_correct_count} / {st.session_state.exam_total_count}")
+        st.success(f"시험 종료! 최종 성적: {st.session_state.exam_correct_count} / {st.session_state.exam_total_count}")
 
 # ---------------------------
 # 9. UI - 단어장 파트
