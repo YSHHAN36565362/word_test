@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 # ---------------------------
 st.set_page_config(
     page_title="단어 암기 프로그램",
-    page_icon="📚",
+    page_icon="",
     layout="centered"
 )
 
@@ -1012,7 +1012,7 @@ def main() -> None:
     init_session_state()
     apply_global_style()
 
-    st.title("📚 단어 암기 프로그램")
+    st.title(" 단어 암기 프로그램")
 
     page = st.radio(
         "파트 이동",
