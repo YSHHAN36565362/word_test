@@ -5,8 +5,10 @@ import requests
 import base64
 import re
 import hmac
+import time
 import google.generativeai as genai
-from datetime import datetime, date
+from google.api_core.exceptions import ResourceExhausted
+from datetime import datetime
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -18,7 +20,8 @@ st.set_page_config(
 
 KOREA_TZ = ZoneInfo("Asia/Seoul")
 
-GEMINI_MODEL_NAME = "gemini-2.0-flash"
+GEMINI_MODEL_NAME = "gemini-2.5-flash-lite"
+GEMINI_MAX_RETRIES = 2
 
 GEMINI_PROMPT_TEMPLATE = """# Role
 You are an expert Japanese-Korean lexicographer and kanji etymologist. Your task is to parser and enrich a provided list of Japanese words into a highly structured, educational format.
@@ -102,7 +105,6 @@ def init_session_state() -> None:
         "exam_display_side": 0,
         "exam_total_count_input": 10,
         "exam_wrong_words": [],
-        "exam_best_score": 0,
 
         "font_scale": 1.0,
         "theme_mode": "다크 모드",
@@ -119,34 +121,18 @@ def init_session_state() -> None:
         "current_page_select": "학습",
 
         "favorite_words": {},
-
-        "stats_date": None,
-        "stats_studied_count": 0,
-        "stats_practice_total": 0,
-        "stats_practice_correct": 0,
-        "stats_exam_best_accuracy": 0.0,
-
         "use_favorites_only": False,
 
         "toast_queue": [],
 
         "gemini_raw_input": "",
         "gemini_converted_result": "",
-        "gemini_is_loading": False,
         "manual_wordbook_text_area": "",
     }
 
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
-
-    today_str = datetime.now(KOREA_TZ).strftime("%Y-%m-%d")
-    if st.session_state.stats_date != today_str:
-        st.session_state.stats_date = today_str
-        st.session_state.stats_studied_count = 0
-        st.session_state.stats_practice_total = 0
-        st.session_state.stats_practice_correct = 0
-        st.session_state.stats_exam_best_accuracy = 0.0
 
 
 def is_focus_active() -> bool:
@@ -225,7 +211,6 @@ def apply_global_style() -> None:
     accent_bg = "#1f2233" if is_dark else "#eef0fa"
     accent_text = "#9db2ff" if is_dark else "#3d4ea8"
     sticky_bg = "#1a1a20" if is_dark else "#fafafc"
-    summary_bg = "#20242e" if is_dark else "#f6f7fb"
     fav_color = "#ffcf4d"
 
     focus_header_css = """
@@ -320,21 +305,6 @@ def apply_global_style() -> None:
             line-height: 1.5;
             word-break: break-all;
         }}
-
-        .summary-box {{
-            background: {summary_bg};
-            border: 1px solid {border_color};
-            border-radius: 14px;
-            padding: 14px 16px;
-            margin-bottom: 14px;
-            display: flex;
-            justify-content: space-around;
-            text-align: center;
-            gap: 6px;
-        }}
-        .summary-item {{ display: flex; flex-direction: column; }}
-        .summary-value {{ font-size: 1.25rem; font-weight: 800; color: {word_color}; }}
-        .summary-label {{ font-size: 0.75rem; color: {muted_color}; margin-top: 2px; }}
 
         .fav-star {{ color: {fav_color}; font-size: 1.1rem; }}
 
@@ -581,17 +551,31 @@ def convert_words_with_gemini(raw_words: str) -> tuple:
     if not raw_words.strip():
         return "", "변환할 단어를 입력해주세요."
 
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-        prompt = GEMINI_PROMPT_TEMPLATE.format(word_list=raw_words.strip())
-        response = model.generate_content(prompt)
-        text = (response.text or "").strip() if response else ""
-        if not text:
-            return "", "Gemini가 빈 응답을 반환했습니다. 다시 시도해주세요."
-        return text, None
-    except Exception as e:
-        return "", f"Gemini 호출 중 오류가 발생했습니다: {e}"
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+    prompt = GEMINI_PROMPT_TEMPLATE.format(word_list=raw_words.strip())
+
+    last_error = None
+    for attempt in range(GEMINI_MAX_RETRIES + 1):
+        try:
+            response = model.generate_content(prompt)
+            text = (response.text or "").strip() if response else ""
+            if not text:
+                return "", "Gemini가 빈 응답을 반환했습니다. 다시 시도해주세요."
+            return text, None
+        except ResourceExhausted as e:
+            last_error = e
+            if attempt < GEMINI_MAX_RETRIES:
+                time.sleep(15)
+                continue
+            return "", (
+                "Gemini 무료 할당량을 초과했습니다. 잠시 후 다시 시도하거나, "
+                f"Google AI Studio에서 결제를 등록해주세요. (모델: {GEMINI_MODEL_NAME})"
+            )
+        except Exception as e:
+            return "", f"Gemini 호출 중 오류가 발생했습니다: {e}"
+
+    return "", f"Gemini 호출 중 오류가 발생했습니다: {last_error}"
 
 
 def convert_gemini_output_to_word_format(gemini_text: str) -> str:
@@ -605,7 +589,7 @@ def convert_gemini_output_to_word_format(gemini_text: str) -> str:
     blocks = []
     current_block = []
     for line in lines:
-        if line.strip() == "" :
+        if line.strip() == "":
             if current_block:
                 blocks.append(current_block)
                 current_block = []
@@ -793,33 +777,6 @@ def render_active_files_banner() -> None:
         f"<div class='active-files-box'><b>현재 학습 파일 ({len(labels)}개)</b><br>{items}</div>",
         unsafe_allow_html=True
     )
-
-
-def render_today_summary() -> None:
-    total_practice = st.session_state.stats_practice_total
-    correct_practice = st.session_state.stats_practice_correct
-    accuracy = round(correct_practice / total_practice * 100, 1) if total_practice > 0 else 0.0
-
-    st.markdown(f"""
-        <div class="summary-box">
-            <div class="summary-item">
-                <div class="summary-value">{st.session_state.stats_studied_count}</div>
-                <div class="summary-label">오늘 학습한 단어</div>
-            </div>
-            <div class="summary-item">
-                <div class="summary-value">{accuracy}%</div>
-                <div class="summary-label">연습 정답률</div>
-            </div>
-            <div class="summary-item">
-                <div class="summary-value">{st.session_state.stats_exam_best_accuracy}%</div>
-                <div class="summary-label">오늘 시험 최고 정답률</div>
-            </div>
-            <div class="summary-item">
-                <div class="summary-value">{len(st.session_state.favorite_words)}</div>
-                <div class="summary-label">즐겨찾기 단어</div>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
 
 
 # ---------------------------
@@ -1037,7 +994,6 @@ def render_study_active() -> None:
                 if st.button("다음 단어", use_container_width=True, key="study_next_btn"):
                     st.session_state.study_index += 1
                     st.session_state.study_show_hint = False
-                    st.session_state.stats_studied_count += 1
                     st.rerun()
             with b2:
                 if st.button("힌트 보기", use_container_width=True, disabled=not has_hint, key="study_hint_btn"):
@@ -1129,10 +1085,7 @@ def render_practice_active() -> None:
                 render_favorite_toggle_button(cw, "practice")
 
             def apply_score(level: int) -> None:
-                st.session_state.stats_practice_total += 1
-                if level == 100:
-                    st.session_state.stats_practice_correct += 1
-                else:
+                if level != 100:
                     pos = requeue_position(len(st.session_state.practice_queue), level)
                     st.session_state.practice_queue.insert(pos, cw)
                     if level in (40, 0):
@@ -1324,9 +1277,6 @@ def render_exam_active() -> None:
     else:
         total = max(1, st.session_state.exam_total_count)
         accuracy = round(st.session_state.exam_correct_count / total * 100, 1)
-
-        if accuracy > st.session_state.stats_exam_best_accuracy:
-            st.session_state.stats_exam_best_accuracy = accuracy
 
         if accuracy >= 90:
             grade_icon, grade_text = "🏆", "최고 등급! 완벽에 가까운 실력입니다."
@@ -1619,7 +1569,6 @@ def main() -> None:
             st.rerun()
     else:
         render_full_header()
-        render_today_summary()
 
         page = st.radio(
             "파트 이동",
