@@ -5,9 +5,6 @@ import requests
 import base64
 import re
 import hmac
-import time
-import google.generativeai as genai
-from google.api_core.exceptions import ResourceExhausted
 from datetime import datetime
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -19,55 +16,6 @@ st.set_page_config(
 )
 
 KOREA_TZ = ZoneInfo("Asia/Seoul")
-
-GEMINI_MODEL_NAME = "gemini-2.5-flash-lite"
-GEMINI_MAX_RETRIES = 2
-
-GEMINI_PROMPT_TEMPLATE = """# Role
-You are an expert Japanese-Korean lexicographer and kanji etymologist. Your task is to parser and enrich a provided list of Japanese words into a highly structured, educational format.
-
-# Target Format Rules
-For EVERY word in the input list, you must output exactly in the following format:
-
-[Japanese Word]
-[Korean Meaning]([Yomigana in Hiragana/Katakana])
-[Kanji 1] ([Korean Hanja Meaning/Sound]) = [Components Breakdown if applicable] : [Detailed Etymology/Origin Story]
-[Kanji 2] ([Korean Hanja Meaning/Sound]) = [Components Breakdown if applicable] : [Detailed Etymology/Origin Story]
-... (Repeat for all Kanji in the word)
-[Comprehensive explanation of the word's holistic meaning based on its components or origin]
-
-* Constraints for Katakana/Loan Words: If the word is Katakana (e.g., マ신, セットアップ), explain its English origin and its specific IT/contextual meaning instead of Kanji breakdown.
-
-# Output Control & Completeness Metric
-1. Do not skip any words. Translate and break down as many as possible within your output token limit.
-2. If you cannot complete the entire list due to output token limits, stop gracefully at the last possible word and append the completeness metric at the very end.
-3. The completeness metric must state: "완료율: [Completed Count] / [Total Input Count] ([Percentage]%) 완료되었습니다."
-
-# Examples
-
-灰皿
-재떨이(はいざら)
-灰 (재 회) = 厂 (기슭 엄/손) + 火 (불 화) : 불(火)이 다 타고 남은 찌꺼기를 손(厂)으로 만지는 모습에서 재를 뜻합니다.
-皿 (그릇 명) = 음식을 담는 오목한 그릇의 모양을 본뜬 상형자입니다.
-담배를 피우고 난 뒤 남은 재(灰)를 털어서 안전하게 담아두는 작은 그릇(皿)을 의미합니다.
-
-制作・する
-제작·하다(せいさく・する)
-制 (절제할 제/지을 제) = 未 (아닐 미/나뭇가지) + 刂 (칼 도) : 칼(刂)로 나뭇가지(未)를 쳐내어 모양을 다듬고 짓는다는 뜻입니다.
-作 (지을 작) = 亻 (사람 인) + 乍 (잠깐 사/옷깃) : 사람(亻)이 옷깃(乍)을 여미고 무언가를 만들어 내는 일에 착수한다는 뜻입니다.
-예술 작품이나 도구, 물건 등을 일정한 기준에 맞춰 다듬고(制) 새롭게 만들어 내는(作) 작업을 의미합니다.
-
-マシン
-머신, 기계(マシン)
-Machine (머신) = 기계 장치를 뜻하는 영어 단어에서 유래했습니다.
-컴퓨터, 서버, 혹은 복잡한 부품으로 이루어져 특정한 동력이나 연산을 수행하는 하드웨어 장비를 의미합니다.
-
-# Input Data
-Here is the raw list of Japanese words you need to process:
----
-{word_list}
----
-"""
 
 
 # ---------------------------
@@ -91,7 +39,6 @@ def init_session_state() -> None:
         "practice_mode": "random",
         "practice_show_answer": False,
         "practice_show_hint": False,
-        "practice_wrong_words": [],
 
         "exam_queue": [],
         "current_exam_word": None,
@@ -104,7 +51,6 @@ def init_session_state() -> None:
         "exam_show_answer": False,
         "exam_display_side": 0,
         "exam_total_count_input": 10,
-        "exam_wrong_words": [],
 
         "font_scale": 1.0,
         "theme_mode": "다크 모드",
@@ -115,19 +61,9 @@ def init_session_state() -> None:
 
         "sidebar_main_cat": None,
         "sidebar_sub_cats": [],
-        "sidebar_file_search": "",
 
         "active_part": None,
         "current_page_select": "학습",
-
-        "favorite_words": {},
-        "use_favorites_only": False,
-
-        "toast_queue": [],
-
-        "gemini_raw_input": "",
-        "gemini_converted_result": "",
-        "manual_wordbook_text_area": "",
     }
 
     for key, value in defaults.items():
@@ -164,32 +100,6 @@ def render_exit_button(label: str = "학습 종료하기") -> None:
             st.rerun()
 
 
-def push_toast(message: str, icon: str = "ℹ️") -> None:
-    st.session_state.toast_queue.append((message, icon))
-
-
-def flush_toasts() -> None:
-    for message, icon in st.session_state.toast_queue:
-        st.toast(message, icon=icon)
-    st.session_state.toast_queue = []
-
-
-def word_key(w: dict) -> str:
-    return f"{w['word']}|||{w['meaning']}"
-
-
-def toggle_favorite(w: dict) -> None:
-    key = word_key(w)
-    if key in st.session_state.favorite_words:
-        del st.session_state.favorite_words[key]
-    else:
-        st.session_state.favorite_words[key] = w
-
-
-def is_favorite(w: dict) -> bool:
-    return word_key(w) in st.session_state.favorite_words
-
-
 # ---------------------------
 # 2. 글로벌 CSS 스타일
 # ---------------------------
@@ -211,7 +121,6 @@ def apply_global_style() -> None:
     accent_bg = "#1f2233" if is_dark else "#eef0fa"
     accent_text = "#9db2ff" if is_dark else "#3d4ea8"
     sticky_bg = "#1a1a20" if is_dark else "#fafafc"
-    fav_color = "#ffcf4d"
 
     focus_header_css = """
         header[data-testid="stHeader"] { display: none !important; }
@@ -245,6 +154,7 @@ def apply_global_style() -> None:
             to   {{ opacity: 1; }}
         }}
 
+        /* ---------- 진행 중 화면 상단 고정 조작바 (정답 확인 / 힌트 보기) ---------- */
         .sticky-action-bar {{
             position: sticky;
             top: 0;
@@ -266,7 +176,6 @@ def apply_global_style() -> None:
             padding: clamp(16px, 3vw, 28px) clamp(14px, 3vw, 24px);
             margin: 10px 0;
             animation: fadeIn 0.25s ease both;
-            position: relative;
         }}
         .word-text {{
             font-size: clamp(1.3rem, 2.4vw, 1.7rem) !important;
@@ -304,21 +213,6 @@ def apply_global_style() -> None:
             font-size: 0.8rem;
             line-height: 1.5;
             word-break: break-all;
-        }}
-
-        .fav-star {{ color: {fav_color}; font-size: 1.1rem; }}
-
-        .gemini-result-box {{
-            background: {hint_bg};
-            border: 1px solid {border_color};
-            border-radius: 12px;
-            padding: 12px 14px;
-            margin-top: 8px;
-            white-space: pre-wrap;
-            font-size: 0.9rem;
-            line-height: 1.6;
-            max-height: 420px;
-            overflow-y: auto;
         }}
 
         div[data-testid="stButton"] > button {{
@@ -387,6 +281,7 @@ def mobile_stack_container(key: str):
 
 
 def sticky_action_bar(key: str):
+    """정답 확인/다음 버튼과 힌트 버튼을 화면 맨 위에 고정해서 스크롤해도 항상 보이게 한다."""
     st.markdown('<div class="sticky-action-bar">', unsafe_allow_html=True)
     box = st.container(key=key)
     st.markdown('</div>', unsafe_allow_html=True)
@@ -394,6 +289,7 @@ def sticky_action_bar(key: str):
 
 
 def inject_session_keepalive() -> None:
+    """비활동 상태가 길어져도 세션이 초기화되지 않도록 주기적으로 백그라운드 핑을 보낸다."""
     components.html("""
         <script>
         const win = window.parent;
@@ -410,6 +306,7 @@ def inject_session_keepalive() -> None:
 
 
 def inject_keyboard_shortcuts() -> None:
+    """스페이스바/H/Z/X/C/V 단축키를 입력창 밖에서만 동작하도록 주입한다."""
     components.html("""
         <script>
         const doc = window.parent.document;
@@ -441,7 +338,6 @@ def inject_keyboard_shortcuts() -> None:
                 else if (key === 'x') { clickBtn(['조금 앎', '틀림']); }
                 else if (key === 'c') { clickBtn(['헷갈림']); }
                 else if (key === 'v') { clickBtn(['모름']); }
-                else if (key === 'f') { clickBtn(['즐겨찾기']); }
             });
         }
         </script>
@@ -534,87 +430,6 @@ def upload_text_to_github(folder_path: str, file_name: str, text_content: str):
 
 def clear_github_cache() -> None:
     st.cache_data.clear()
-
-
-# ---------------------------
-# 3-1. Gemini API 연동 (단어 변환)
-# ---------------------------
-def get_gemini_api_key() -> str:
-    return str(st.secrets.get("gemini_api_key", "")).strip()
-
-
-def convert_words_with_gemini(raw_words: str) -> tuple:
-    """입력한 단어 목록을 Gemini에 보내 지정된 형식으로 변환한다. (결과 텍스트, 에러 메시지) 튜플을 반환."""
-    api_key = get_gemini_api_key()
-    if not api_key:
-        return "", "Secrets에 gemini_api_key가 설정되어 있지 않습니다."
-    if not raw_words.strip():
-        return "", "변환할 단어를 입력해주세요."
-
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-    prompt = GEMINI_PROMPT_TEMPLATE.format(word_list=raw_words.strip())
-
-    last_error = None
-    for attempt in range(GEMINI_MAX_RETRIES + 1):
-        try:
-            response = model.generate_content(prompt)
-            text = (response.text or "").strip() if response else ""
-            if not text:
-                return "", "Gemini가 빈 응답을 반환했습니다. 다시 시도해주세요."
-            return text, None
-        except ResourceExhausted as e:
-            last_error = e
-            if attempt < GEMINI_MAX_RETRIES:
-                time.sleep(15)
-                continue
-            return "", (
-                "Gemini 무료 할당량을 초과했습니다. 잠시 후 다시 시도하거나, "
-                f"Google AI Studio에서 결제를 등록해주세요. (모델: {GEMINI_MODEL_NAME})"
-            )
-        except Exception as e:
-            return "", f"Gemini 호출 중 오류가 발생했습니다: {e}"
-
-    return "", f"Gemini 호출 중 오류가 발생했습니다: {last_error}"
-
-
-def convert_gemini_output_to_word_format(gemini_text: str) -> str:
-    """
-    Gemini 출력(단어 / 뜻(요미가나) / 한자 풀이... / 종합 설명)을
-    기존 단어장 파싱 형식인 '단어 : 뜻' + 힌트(한자 풀이+종합 설명) 로 변환한다.
-    """
-    normalized = gemini_text.replace("\r\n", "\n")
-    lines = [l for l in normalized.split("\n")]
-
-    blocks = []
-    current_block = []
-    for line in lines:
-        if line.strip() == "":
-            if current_block:
-                blocks.append(current_block)
-                current_block = []
-            continue
-        if line.strip().startswith("완료율"):
-            continue
-        current_block.append(line)
-    if current_block:
-        blocks.append(current_block)
-
-    output_lines = []
-    for block in blocks:
-        if len(block) < 2:
-            continue
-        word = block[0].strip()
-        meaning_line = block[1].strip()
-        hint_lines = block[2:]
-        hint_text = "\n".join(l.strip() for l in hint_lines if l.strip())
-
-        output_lines.append(f"{word} : {meaning_line}")
-        if hint_text:
-            output_lines.append(hint_text)
-        output_lines.append("")
-
-    return "\n".join(output_lines).strip()
 
 
 # ---------------------------
@@ -746,6 +561,7 @@ def build_word_pool(selected_files: list) -> list:
 
 
 def get_session_rng() -> random.Random:
+    """사용자(세션)별로 독립된 난수 생성기를 반환한다."""
     if "session_rng" not in st.session_state:
         st.session_state.session_rng = random.Random()
     return st.session_state.session_rng
@@ -780,7 +596,7 @@ def render_active_files_banner() -> None:
 
 
 # ---------------------------
-# 5. UI - 사이드바
+# 5. UI - 사이드바 (카테고리 기반 파일 선택, 설정 화면에서만 표시)
 # ---------------------------
 def render_sidebar() -> list:
     with st.sidebar:
@@ -803,21 +619,6 @@ def render_sidebar() -> list:
                 st.session_state.font_scale = 1.0; st.rerun()
 
         st.write("---")
-
-        if st.session_state.favorite_words:
-            fav_col1, fav_col2 = st.columns([3, 2])
-            with fav_col1:
-                st.caption(f"즐겨찾기 {len(st.session_state.favorite_words)}개 등록됨")
-            with fav_col2:
-                st.session_state.use_favorites_only = st.checkbox(
-                    "즐겨찾기만 사용", value=st.session_state.use_favorites_only, key="fav_only_checkbox"
-                )
-            st.write("---")
-
-        if st.session_state.use_favorites_only:
-            st.info("즐겨찾기에 등록된 단어만 사용합니다. 아래 파일 선택은 무시됩니다.")
-            return list(st.session_state.favorite_words.values())
-
         st.subheader("학습 자료 선택")
 
         categories, cat_error = get_dynamic_categories()
@@ -860,12 +661,6 @@ def render_sidebar() -> list:
 
         st.write("**3. 파일 선택**")
 
-        search_term = st.text_input(
-            "파일 검색", value=st.session_state.sidebar_file_search,
-            placeholder="파일명으로 검색...", key="sidebar_file_search_input"
-        )
-        st.session_state.sidebar_file_search = search_term
-
         all_widget_keys = [f"filechk_{f['label']}_widget" for f in all_files]
         for wk in all_widget_keys:
             if wk not in st.session_state:
@@ -883,15 +678,12 @@ def render_sidebar() -> list:
                     st.session_state[wk] = False
                 st.rerun()
 
-        search_lower = search_term.strip().lower()
-
         for group_name, files in groups.items():
-            filtered_files = [f for f in files if search_lower in f["label"].lower()] if search_lower else files
-            if not filtered_files:
+            if not files:
                 continue
             st.markdown(f"<div class='cat-group-title'>{group_name}</div>", unsafe_allow_html=True)
 
-            group_widget_keys = [f"filechk_{f['label']}_widget" for f in filtered_files]
+            group_widget_keys = [f"filechk_{f['label']}_widget" for f in files]
             g_col1, g_col2 = st.columns(2)
             with g_col1:
                 if st.button(f"{group_name} 전체 선택", use_container_width=True, key=f"grp_sel_{group_name}"):
@@ -905,7 +697,7 @@ def render_sidebar() -> list:
                     st.rerun()
 
             st.markdown('<div class="file-check-row">', unsafe_allow_html=True)
-            for f in filtered_files:
+            for f in files:
                 wk = f"filechk_{f['label']}_widget"
                 st.checkbox(f["label"], key=wk)
             st.markdown('</div>', unsafe_allow_html=True)
@@ -923,13 +715,6 @@ def load_data(selected_files: list, is_script: bool = False) -> bool:
         st.warning("사이드바에서 파일을 선택해주세요.")
         return False
 
-    if st.session_state.use_favorites_only and not is_script:
-        st.session_state.current_files_label = ["즐겨찾기 단어 모음"]
-        pool = list(selected_files)
-        get_session_rng().shuffle(pool)
-        st.session_state.words = pool
-        return True
-
     st.session_state.current_files_label = [f["label"] for f in selected_files]
 
     if is_script:
@@ -946,32 +731,12 @@ def load_data(selected_files: list, is_script: bool = False) -> bool:
     return True
 
 
-def load_words_from_list(words: list) -> bool:
-    if not words:
-        st.warning("불러올 단어가 없습니다.")
-        return False
-    st.session_state.current_files_label = ["오답 노트 다시 보기"]
-    pool = list(words)
-    get_session_rng().shuffle(pool)
-    st.session_state.words = pool
-    return True
-
-
-def render_favorite_toggle_button(w: dict, key_prefix: str) -> None:
-    fav = is_favorite(w)
-    label = "★ 즐겨찾기 해제" if fav else "☆ 즐겨찾기 추가"
-    if st.button(label, use_container_width=True, key=f"{key_prefix}_fav_btn"):
-        toggle_favorite(w)
-        push_toast("즐겨찾기에서 제거했습니다." if fav else "즐겨찾기에 추가했습니다.", icon="⭐")
-        st.rerun()
-
-
 # ---------------------------
 # 6. 학습 파트
 # ---------------------------
 def render_study_setup() -> None:
     st.header("학습 파트")
-    st.caption("단축키: 스페이스바 = 다음 단어, H = 힌트 보기, F = 즐겨찾기")
+    st.caption("단축키: 스페이스바 = 다음 단어, H = 힌트 보기")
     selected_files = render_sidebar()
 
     if st.button("학습 시작", use_container_width=True):
@@ -984,29 +749,23 @@ def render_study_setup() -> None:
 
 
 def render_study_active() -> None:
+    """진행 중에는 조작 버튼을 화면 맨 위 고정바에 배치하고, 그 아래에 카드를 보여준다."""
     if st.session_state.study_index < len(st.session_state.words):
         word_data = st.session_state.words[st.session_state.study_index]
         has_hint = bool(word_data["hint"].strip())
 
         with sticky_action_bar("study_sticky_bar"):
-            b1, b2, b3 = st.columns([2, 2, 2])
-            with b1:
-                if st.button("다음 단어", use_container_width=True, key="study_next_btn"):
-                    st.session_state.study_index += 1
-                    st.session_state.study_show_hint = False
-                    st.rerun()
-            with b2:
-                if st.button("힌트 보기", use_container_width=True, disabled=not has_hint, key="study_hint_btn"):
-                    st.session_state.study_show_hint = True
-                    st.rerun()
-            with b3:
-                render_favorite_toggle_button(word_data, "study")
-
-        fav_badge = "<span class='fav-star'>★</span> " if is_favorite(word_data) else ""
+            if st.button("다음 단어", use_container_width=True, key="study_next_btn"):
+                st.session_state.study_index += 1
+                st.session_state.study_show_hint = False
+                st.rerun()
+            if st.button("힌트 보기", use_container_width=True, disabled=not has_hint, key="study_hint_btn"):
+                st.session_state.study_show_hint = True
+                st.rerun()
 
         st.markdown(f"""
             <div class="study-card qa-compact">
-                <div class="word-text">{fav_badge}{word_data['word']}</div>
+                <div class="word-text">{word_data['word']}</div>
                 <div class="meaning-text">{word_data['meaning']}</div>
             </div>
         """, unsafe_allow_html=True)
@@ -1038,7 +797,7 @@ def render_study_active() -> None:
 # ---------------------------
 def render_practice_setup() -> None:
     st.header("연습 파트 (망각 곡선 적용)")
-    st.caption("단축키: 스페이스바 = 정답(힌트도 함께 표시), H = 힌트, Z=100 X=60 C=40 V=0, F = 즐겨찾기")
+    st.caption("단축키: 스페이스바 = 정답(힌트도 함께 표시), H = 힌트, Z=100 X=60 C=40 V=0")
     selected_files = render_sidebar()
 
     with mobile_stack_container("practice_mode_btns"):
@@ -1052,7 +811,6 @@ def render_practice_setup() -> None:
         st.session_state.practice_queue = list(st.session_state.words)
         st.session_state.practice_total_count = len(st.session_state.practice_queue)
         st.session_state.practice_done_count = 0
-        st.session_state.practice_wrong_words = []
         st.session_state.is_practicing = True
         st.session_state.active_part = "practice"
         st.session_state.practice_mode = mode
@@ -1072,25 +830,17 @@ def render_practice_active() -> None:
         is_ans_shown = st.session_state.practice_show_answer
 
         with sticky_action_bar("practice_sticky_bar"):
-            top1, top2, top3 = st.columns([2, 2, 2])
-            with top1:
-                if st.button("정답 확인", use_container_width=True, key="practice_check_btn"):
-                    st.session_state.practice_show_answer = True
-                    st.session_state.practice_show_hint = has_hint
-                    st.rerun()
-            with top2:
-                if st.button("힌트 보기", use_container_width=True, disabled=not has_hint, key="practice_hint_btn"):
-                    st.session_state.practice_show_hint = True; st.rerun()
-            with top3:
-                render_favorite_toggle_button(cw, "practice")
+            if st.button("정답 확인", use_container_width=True, key="practice_check_btn"):
+                st.session_state.practice_show_answer = True
+                st.session_state.practice_show_hint = has_hint
+                st.rerun()
+            if st.button("힌트 보기", use_container_width=True, disabled=not has_hint, key="practice_hint_btn"):
+                st.session_state.practice_show_hint = True; st.rerun()
 
             def apply_score(level: int) -> None:
                 if level != 100:
                     pos = requeue_position(len(st.session_state.practice_queue), level)
                     st.session_state.practice_queue.insert(pos, cw)
-                    if level in (40, 0):
-                        if cw not in st.session_state.practice_wrong_words:
-                            st.session_state.practice_wrong_words.append(cw)
 
                 st.session_state.practice_done_count += 1
                 st.session_state.practice_show_answer = False
@@ -1113,9 +863,8 @@ def render_practice_active() -> None:
 
         q_text = cw["word"] if st.session_state.practice_display_side == 0 else cw["meaning"]
         a_text = cw["meaning"] if st.session_state.practice_display_side == 0 else cw["word"]
-        fav_badge = "<span class='fav-star'>★</span> " if is_favorite(cw) else ""
 
-        card_html = f"<div class='study-card qa-compact'><div class='test-question'>{fav_badge}{q_text}</div>"
+        card_html = f"<div class='study-card qa-compact'><div class='test-question'>{q_text}</div>"
         if is_ans_shown:
             card_html += f"<div class='test-answer'>정답: {a_text}</div>"
         if st.session_state.practice_show_hint and has_hint:
@@ -1132,26 +881,6 @@ def render_practice_active() -> None:
     else:
         st.success("대기열의 모든 연습을 완료했습니다.")
 
-        wrong_words = st.session_state.practice_wrong_words
-        if wrong_words:
-            st.markdown(f"**헷갈리거나 몰랐던 단어 {len(wrong_words)}개**")
-            st.table([{"단어": w["word"], "뜻": w["meaning"]} for w in wrong_words])
-
-            if st.button("오답만 다시 연습하기", use_container_width=True, key="practice_retry_wrong"):
-                if load_words_from_list(wrong_words):
-                    st.session_state.practice_queue = list(st.session_state.words)
-                    st.session_state.practice_total_count = len(st.session_state.practice_queue)
-                    st.session_state.practice_done_count = 0
-                    st.session_state.practice_wrong_words = []
-                    st.session_state.practice_show_answer = False
-                    st.session_state.practice_show_hint = False
-                    if st.session_state.practice_queue:
-                        st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-                        st.session_state.practice_display_side = get_display_side(st.session_state.practice_mode)
-                    st.rerun()
-        else:
-            st.info("오답 없이 전부 완벽하게 맞혔습니다.")
-
     render_exit_button("연습 종료하기")
 
 
@@ -1160,15 +889,12 @@ def render_practice_active() -> None:
 # ---------------------------
 def render_exam_setup() -> None:
     st.header("시험 파트")
-    st.caption("단축키: 스페이스바 = 정답 확인(힌트도 함께 표시), Z = 맞음, X = 틀림, F = 즐겨찾기")
+    st.caption("단축키: 스페이스바 = 정답 확인(힌트도 함께 표시), Z = 맞음, X = 틀림")
     selected_files = render_sidebar()
 
     total_words = 0
     if selected_files:
-        if st.session_state.use_favorites_only:
-            total_words = len(selected_files)
-        else:
-            total_words = len(build_word_pool(selected_files))
+        total_words = len(build_word_pool(selected_files))
 
     if total_words > 0:
         st.write("---")
@@ -1208,7 +934,6 @@ def render_exam_setup() -> None:
             st.session_state.exam_correct_count = 0
             st.session_state.exam_wrong_count = 0
             st.session_state.exam_show_answer = False
-            st.session_state.exam_wrong_words = []
 
             exam_words = list(st.session_state.words)
             actual_count = min(st.session_state.exam_total_count_input, len(exam_words))
@@ -1229,20 +954,14 @@ def render_exam_active() -> None:
         is_ans_shown = st.session_state.exam_show_answer
 
         with sticky_action_bar("exam_sticky_bar"):
-            top1, top2 = st.columns([3, 2])
-            with top1:
-                if st.button("정답 확인", use_container_width=True, key="exam_check_btn"):
-                    st.session_state.exam_show_answer = True; st.rerun()
-            with top2:
-                render_favorite_toggle_button(cw, "exam")
+            if st.button("정답 확인", use_container_width=True, key="exam_check_btn"):
+                st.session_state.exam_show_answer = True; st.rerun()
 
             def next_exam(correct: bool = True) -> None:
                 if correct:
                     st.session_state.exam_correct_count += 1
                 else:
                     st.session_state.exam_wrong_count += 1
-                    if cw not in st.session_state.exam_wrong_words:
-                        st.session_state.exam_wrong_words.append(cw)
 
                 st.session_state.exam_show_answer = False
                 if st.session_state.exam_queue:
@@ -1262,9 +981,8 @@ def render_exam_active() -> None:
 
         q_text = cw["word"] if st.session_state.exam_display_side == 0 else cw["meaning"]
         a_text = cw["meaning"] if st.session_state.exam_display_side == 0 else cw["word"]
-        fav_badge = "<span class='fav-star'>★</span> " if is_favorite(cw) else ""
 
-        card_html = f"<div class='study-card qa-compact'><div class='test-question'>{fav_badge}{q_text}</div>"
+        card_html = f"<div class='study-card qa-compact'><div class='test-question'>{q_text}</div>"
         if is_ans_shown:
             card_html += f"<div class='test-answer'>정답: {a_text}</div>"
             if has_hint:
@@ -1277,101 +995,14 @@ def render_exam_active() -> None:
     else:
         total = max(1, st.session_state.exam_total_count)
         accuracy = round(st.session_state.exam_correct_count / total * 100, 1)
-
-        if accuracy >= 90:
-            grade_icon, grade_text = "🏆", "최고 등급! 완벽에 가까운 실력입니다."
-        elif accuracy >= 70:
-            grade_icon, grade_text = "🎉", "훌륭해요! 조금만 더 다지면 완벽해질 거예요."
-        elif accuracy >= 50:
-            grade_icon, grade_text = "💪", "절반 이상 맞혔어요. 오답만 다시 훈련해보세요."
-        else:
-            grade_icon, grade_text = "📖", "복습이 더 필요해요. 오답 노트로 다시 도전해보세요."
-
-        st.success(f"{grade_icon} 시험 종료. 최종 성적: {st.session_state.exam_correct_count} / {st.session_state.exam_total_count} (정답률 {accuracy}%)")
-        st.caption(grade_text)
-
-        wrong_words = st.session_state.exam_wrong_words
-        if wrong_words:
-            st.markdown(f"**오답 목록 ({len(wrong_words)}개)**")
-            st.table([{"단어": w["word"], "뜻": w["meaning"]} for w in wrong_words])
-
-            if st.button("오답만 다시 시험보기", use_container_width=True, key="exam_retry_wrong"):
-                if load_words_from_list(wrong_words):
-                    st.session_state.exam_mode = "random"
-                    st.session_state.exam_current_number = 0
-                    st.session_state.exam_correct_count = 0
-                    st.session_state.exam_wrong_count = 0
-                    st.session_state.exam_show_answer = False
-                    st.session_state.exam_wrong_words = []
-                    exam_words = list(st.session_state.words)
-                    st.session_state.exam_total_count = len(exam_words)
-                    st.session_state.exam_queue = exam_words
-                    if st.session_state.exam_queue:
-                        st.session_state.current_exam_word = st.session_state.exam_queue.pop(0)
-                        st.session_state.exam_current_number += 1
-                        st.session_state.exam_display_side = get_display_side("random")
-                    st.rerun()
+        st.success(f"시험 종료. 최종 성적: {st.session_state.exam_correct_count} / {st.session_state.exam_total_count} (정답률 {accuracy}%)")
 
     render_exit_button("시험 종료하기")
 
 
 # ---------------------------
-# 9. UI - 단어장 추가 파트 (Gemini 변환 기능 포함)
+# 9. UI - 단어장 추가 파트
 # ---------------------------
-def render_gemini_conversion_section() -> None:
-    """단어 목록을 입력하면 Gemini로 변환해서, 아래 '직접 입력해서 저장' 칸에 바로 채워주는 섹션."""
-    with st.expander("Gemini로 단어 변환해서 채우기", expanded=False):
-        st.caption("한자, 한국어, 히라가나/카타카나 단어를 한 줄에 하나씩 입력하면 Gemini가 뜻·한자 풀이를 붙여서 변환해줍니다.")
-
-        st.session_state.gemini_raw_input = st.text_area(
-            "변환할 단어 목록 (한 줄에 하나씩)",
-            value=st.session_state.gemini_raw_input,
-            height=140,
-            placeholder="예:\n自動車\n開発\nサーバー",
-            key="gemini_raw_input_area"
-        )
-
-        gc1, gc2 = st.columns([2, 1])
-        with gc1:
-            convert_clicked = st.button("Gemini로 변환하기", use_container_width=True, key="gemini_convert_btn")
-        with gc2:
-            clear_clicked = st.button("입력 지우기", use_container_width=True, key="gemini_clear_btn")
-
-        if clear_clicked:
-            st.session_state.gemini_raw_input = ""
-            st.session_state.gemini_converted_result = ""
-            st.rerun()
-
-        if convert_clicked:
-            with st.spinner("Gemini가 단어를 변환하고 있습니다..."):
-                result_text, error_msg = convert_words_with_gemini(st.session_state.gemini_raw_input)
-            if error_msg:
-                st.error(error_msg)
-            else:
-                st.session_state.gemini_converted_result = result_text
-                push_toast("Gemini 변환이 완료되었습니다.", icon="✨")
-                st.rerun()
-
-        if st.session_state.gemini_converted_result:
-            st.markdown("**Gemini 변환 결과 (원본)**")
-            st.markdown(
-                f"<div class='gemini-result-box'>{st.session_state.gemini_converted_result}</div>",
-                unsafe_allow_html=True
-            )
-
-            if st.button("이 결과를 아래 '직접 입력해서 저장' 칸에 채우기", use_container_width=True, key="gemini_fill_btn"):
-                converted = convert_gemini_output_to_word_format(st.session_state.gemini_converted_result)
-                if converted:
-                    existing = st.session_state.manual_wordbook_text_area.strip()
-                    st.session_state.manual_wordbook_text_area = (
-                        f"{existing}\n\n{converted}".strip() if existing else converted
-                    )
-                    push_toast("변환된 단어를 입력칸에 채웠습니다. 내용을 확인한 뒤 저장해주세요.", icon="📋")
-                    st.rerun()
-                else:
-                    st.warning("변환 결과에서 단어를 추출하지 못했습니다. 형식을 확인해주세요.")
-
-
 def render_wordbook_part() -> None:
     st.header("단어장 관리 (GitHub 연동)")
     st.caption("새로운 단어장 파일(.txt)을 GitHub 저장소에 업로드합니다.")
@@ -1380,7 +1011,6 @@ def render_wordbook_part() -> None:
     with top_right:
         if st.button("새로고침", use_container_width=True):
             clear_github_cache()
-            push_toast("파일 목록을 새로고침했습니다.", icon="🔄")
             st.rerun()
 
     categories, cat_error = get_dynamic_categories()
@@ -1415,18 +1045,9 @@ def render_wordbook_part() -> None:
     tab1, tab2 = st.tabs(["직접 입력해서 저장", "txt 파일 업로드"])
 
     with tab1:
-        render_gemini_conversion_section()
-
-        st.write("---")
-
         with st.form("manual_wordbook_form"):
             manual_title = st.text_input("파일 제목", value=get_default_title_prefix(), placeholder="예: 2026-07-20_N2")
-            manual_text = st.text_area(
-                "단어 : 뜻, 다음 줄에 힌트 (또는 단어 / 뜻 / 힌트를 각 줄에)",
-                value=st.session_state.manual_wordbook_text_area,
-                height=280,
-                key="manual_wordbook_text_area"
-            )
+            manual_text = st.text_area("단어 : 뜻, 다음 줄에 힌트 (또는 단어 / 뜻 / 힌트를 각 줄에)", height=250)
             manual_pw = st.text_input("업로드 비밀번호", type="password")
             submitted = st.form_submit_button("저장", use_container_width=True)
 
@@ -1445,9 +1066,6 @@ def render_wordbook_part() -> None:
                 resp, path = upload_text_to_github(target_folder, safe_name, manual_text)
                 if resp.status_code in (200, 201):
                     clear_github_cache()
-                    st.session_state.gemini_converted_result = ""
-                    st.session_state.manual_wordbook_text_area = ""
-                    push_toast(f"업로드 완료: {safe_name} ({len(parsed)}개 단어)", icon="✅")
                     st.success(f"업로드 완료: {path} ({len(parsed)}개 단어)")
                     st.rerun()
                 else:
@@ -1477,7 +1095,6 @@ def render_wordbook_part() -> None:
                     resp, path = upload_text_to_github(target_folder, safe_name, up_text)
                     if resp.status_code in (200, 201):
                         clear_github_cache()
-                        push_toast(f"업로드 완료: {safe_name} ({len(parsed)}개 단어)", icon="✅")
                         st.success(f"업로드 완료: {path} ({len(parsed)}개 단어)")
                         st.rerun()
                     else:
@@ -1591,7 +1208,6 @@ def main() -> None:
 
     inject_keyboard_shortcuts()
     inject_session_keepalive()
-    flush_toasts()
 
 
 if __name__ == "__main__":
