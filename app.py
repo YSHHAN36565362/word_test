@@ -289,17 +289,46 @@ def sticky_action_bar(key: str):
 
 
 def inject_session_keepalive() -> None:
-    """비활동 상태가 길어져도 세션이 초기화되지 않도록 주기적으로 백그라운드 핑을 보낸다."""
+    """
+    브라우저가 서버에게 '나 아직 여기 있어요' 라는 신호를 주기적으로 보내는 기능입니다.
+    이 신호가 끊기면, 사용자가 화면만 보고 아무 버튼도 누르지 않을 때
+    서버가 '이 사람은 나갔다'고 오해해서 세션(학습 진행 상태)을 정리해버릴 수 있습니다.
+    아래 코드는 90초(1.5분)마다 신호를 보내서, 30분 동안 최소 20번 이상 신호가 가도록 만들었습니다.
+    """
     components.html("""
         <script>
+        // 부모 창(실제 브라우저 탭)의 window 객체를 가져옵니다.
         const win = window.parent;
+
+        // 이미 신호 타이머가 설정돼 있다면 중복으로 또 만들지 않도록 막습니다.
+        // (화면이 다시 그려질 때마다 이 스크립트가 여러 번 실행될 수 있기 때문입니다.)
         if (!win.hasOwnProperty('_keepalive_attached')) {
             win._keepalive_attached = true;
-            setInterval(function() {
+
+            // 서버에게 아주 작은 요청을 보내서 '접속 중'임을 알리는 함수입니다.
+            function sendPing() {
                 try {
+                    // no-store: 이 요청 결과를 브라우저가 저장(캐시)하지 않게 합니다.
+                    // no-cors: 응답 내용은 필요 없고, 요청을 보냈다는 사실 자체가 중요합니다.
                     fetch(win.location.href, { method: 'GET', cache: 'no-store', mode: 'no-cors' });
-                } catch (e) {}
-            }, 3 * 60 * 1000);
+                } catch (e) {
+                    // 네트워크가 잠깐 끊기는 등의 이유로 실패해도 앱이 멈추지 않도록 무시합니다.
+                }
+            }
+
+            // 90초(1.5분)마다 sendPing 함수를 반복 실행합니다.
+            win._keepalive_timer = setInterval(sendPing, 90 * 1000);
+
+            // 사용자가 다른 탭을 보다가 이 탭으로 다시 돌아왔을 때 즉시 신호를 한 번 더 보냅니다.
+            // 브라우저는 화면에 보이지 않는 탭의 타이머를 느리게 돌리는 경우가 있기 때문입니다.
+            win.document.addEventListener('visibilitychange', function () {
+                if (win.document.visibilityState === 'visible') {
+                    sendPing();
+                }
+            });
+
+            // 스크립트가 처음 실행될 때도 신호를 한 번 바로 보내둡니다.
+            sendPing();
         }
         </script>
     """, height=0, width=0)
@@ -372,7 +401,7 @@ def github_status_message(status: int) -> str:
     return messages.get(status, f"GitHub API 오류가 발생했습니다 (status: {status}).")
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def github_get_contents(path: str):
     owner, repo, branch = get_repo_info()
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{quote(path.strip(), safe='/')}?ref={quote(branch)}"
@@ -381,7 +410,6 @@ def github_get_contents(path: str):
     except requests.RequestException:
         return 0, {}
     return response.status_code, response.json() if response.status_code == 200 else {}
-
 
 def get_dynamic_categories() -> tuple:
     status, data = github_get_contents("word_list")

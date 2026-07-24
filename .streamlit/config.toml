@@ -1,0 +1,19 @@
+# 파일 경로: .streamlit/config.toml
+# 주의: app.py와 같은 폴더가 아니라, ".streamlit"이라는 하위 폴더 안에 넣어야 합니다.
+
+[client]
+# toolbarMode를 "minimal"로 두면 화면 우측 상단의 점 3개(⋮) 메뉴가 통째로 사라집니다.
+# 이 메뉴 안에 있던 "Clear cache", "Rerun", "Settings" 등 개발자용 옵션이 모두 함께 숨겨집니다.
+toolbarMode = "minimal"
+
+# 에러가 나도 사용자에게 복잡한 코드 스택(디버그 정보)을 보여주지 않게 합니다.
+showErrorDetails = false
+
+[server]
+# 코드 파일이 바뀔 때마다 서버를 자동으로 재시작하며 감시하는 기능을 끕니다.
+# 배포 환경에서 불필요한 서버 재시작(=모든 사용자 세션 초기화)을 막아줍니다.
+fileWatcherType = "none"
+
+[browser]
+# Streamlit이 사용 통계를 외부로 전송하는 기능을 끕니다. (선택 사항)
+gatherUsageStats = false
