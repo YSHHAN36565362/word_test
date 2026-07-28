@@ -768,7 +768,7 @@ def render_active_files_banner() -> None:
 # ---------------------------
 def render_sidebar() -> list:
     with st.sidebar:
-        with st.expander("화면 설정", expanded=False):
+        with st.expander("화면 설정(글자가 안보일 경우, 다크모드 Or 기본 모드 선택)", expanded=False):
             new_theme = st.selectbox(
                 "테마 선택", ["기본 모드", "다크 모드"],
                 index=1 if st.session_state.theme_mode == "다크 모드" else 0,
@@ -1496,7 +1496,7 @@ def render_full_header() -> None:
             <span style="font-size: 1.6rem; font-weight: 800;">단어 암기 프로그램</span>
         </div>
         <div style="text-align:center; color:#8a8a92; font-size:0.85rem; margin-bottom:12px;">
-            매일 조금씩, 확실하게 외우기
+            매일 조금씩, 확실하게 외우기(왼쪽 위의 버튼을 눌러 공부 과목을 선택하세요.)
         </div>
     """, unsafe_allow_html=True)
 
