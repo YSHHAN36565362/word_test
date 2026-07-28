@@ -906,7 +906,7 @@ def load_data(selected_files: list, is_script: bool = False) -> bool:
 # ---------------------------
 def render_study_setup() -> None:
     st.header("학습 파트")
-    st.caption("단축키: 스페이스바 = 다음 단어, H = 힌트 보기")
+    st.caption("단축키 : (대문자는 capslock시 편함) 스페이스바 = 다음 단어, H = 힌트 보기")
     selected_files = render_sidebar()
 
     if st.session_state.user_id:
@@ -997,7 +997,7 @@ def render_study_active() -> None:
 # ---------------------------
 def render_practice_setup() -> None:
     st.header("연습 파트 (망각 곡선 적용)")
-    st.caption("단축키: 스페이스바 = 정답(힌트도 함께 표시), H = 힌트, Z=100 X=60 C=40 V=0")
+    st.caption("단축키 : (대문자는 capslock시 편함) 스페이스바 = 정답(힌트도 함께 표시), H = 힌트, Z=100 X=60 C=40 V=0")
     selected_files = render_sidebar()
 
     if st.session_state.user_id:
@@ -1134,7 +1134,7 @@ def render_practice_active() -> None:
 # ---------------------------
 def render_exam_setup() -> None:
     st.header("시험 파트")
-    st.caption("단축키: 스페이스바 = 정답 확인(힌트도 함께 표시), Z = 맞음, X = 틀림")
+    st.caption("단축키 : (대문자는 capslock시 편함) 스페이스바 = 정답 확인(힌트도 함께 표시), Z = 맞음, X = 틀림")
     selected_files = render_sidebar()
 
     if st.session_state.user_id:
@@ -1405,7 +1405,7 @@ def render_wordbook_part() -> None:
 # ---------------------------
 def render_script_setup() -> None:
     st.header("지문 한 줄 외우기")
-    st.caption("대화 및 지문을 순서대로 연상하며 외웁니다. 단축키: 스페이스바 = 다음 문장")
+    st.caption("대화 및 지문을 순서대로 연상하며 외웁니다. 단축키 : (대문자는 capslock시 편함) 스페이스바 = 다음 문장")
     selected_files = render_sidebar()
 
     if st.session_state.user_id:
