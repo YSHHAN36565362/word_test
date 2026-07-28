@@ -587,8 +587,8 @@ def render_user_id_gate() -> None:
     if not st.session_state.user_id and query_uid:
         st.session_state.user_id = sanitize_user_id(query_uid)
 
-    with st.expander("내 번호 (진행 상황 저장)\n 번호 없이 진행시, 저장없이 진행 가능", expanded=not st.session_state.user_id):
-        st.caption("번호를 입력하면 학습/연습/시험/지문 진행 상황이 자동 저장되어, 다음에 이어서 할 수 있습니다.")
+    with st.expander("내 번호 (진행 상황 저장)", expanded=not st.session_state.user_id):
+        st.caption("번호를 입력하면 학습/연습/시험/지문 진행 상황이 자동 저장되어, 다음에 이어서 할 수 있습니다. 번호 없이 진행시, 저장없이 진행 가능")
         input_id = st.text_input("내 번호 (숫자 등 자유롭게, 010721,0107211 등 겹치지 않는 생년월일 추천)", value=st.session_state.user_id, key="user_id_input")
         clean_id = sanitize_user_id(input_id)
         if clean_id != st.session_state.user_id:
