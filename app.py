@@ -5,6 +5,7 @@ import requests
 import base64
 import re
 import hmac
+import json
 from datetime import datetime
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -64,6 +65,8 @@ def init_session_state() -> None:
 
         "active_part": None,
         "current_page_select": "학습",
+
+        "user_id": "",
     }
 
     for key, value in defaults.items():
@@ -440,24 +443,161 @@ def get_file_content(repo_file_path: str) -> str:
     return ""
 
 
+def get_remote_file_sha(repo_path: str):
+    """
+    GitHub에 같은 경로의 파일이 이미 있는지 확인하고, 있다면 그 파일의 sha 값을 가져온다.
+    GitHub Contents API는 '기존 파일을 덮어쓰기' 할 때 반드시 최신 sha를 함께 보내야 하며,
+    그렇지 않으면 422 "sha" wasn't supplied 오류가 발생한다.
+    30분짜리 캐시(github_get_contents)를 타면 방금 지운/새로 만든 파일의 sha가 낡을 수 있으므로
+    이 함수는 캐시를 거치지 않고 항상 최신 상태를 직접 조회한다.
+    """
+    owner, repo, branch = get_repo_info()
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{quote(repo_path.strip(), safe='/')}?ref={quote(branch)}"
+    try:
+        response = requests.get(url, headers=get_github_headers(), timeout=15)
+    except requests.RequestException:
+        return None
+    if response.status_code == 200:
+        return response.json().get("sha")
+    return None
+
+
 def upload_text_to_github(folder_path: str, file_name: str, text_content: str):
     owner, repo, branch = get_repo_info()
     repo_path = f"{str(folder_path).strip()}/{str(file_name).strip()}"
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{quote(repo_path, safe='/')}"
 
     content_b64 = base64.b64encode(text_content.encode("utf-8")).decode("utf-8")
-    payload = {
-        "message": f"Add file: {repo_path}",
-        "content": content_b64,
-        "branch": branch
-    }
 
-    response = requests.put(url, headers=get_github_headers(), json=payload, timeout=30)
+    def build_payload(sha):
+        payload = {
+            "message": f"{'Update' if sha else 'Add'} file: {repo_path}",
+            "content": content_b64,
+            "branch": branch,
+        }
+        if sha:
+            payload["sha"] = sha
+        return payload
+
+    existing_sha = get_remote_file_sha(repo_path)
+    response = requests.put(url, headers=get_github_headers(), json=build_payload(existing_sha), timeout=30)
+
+    # sha 조회 시점과 업로드 시점 사이의 타이밍 문제 등으로 "sha wasn't supplied" 오류가 나면,
+    # 최신 sha를 한 번 더 가져와서 즉시 재시도한다. (방금 막 생성된 파일 등 엣지 케이스 대응)
+    if response.status_code == 422 and "sha" in response.text.lower():
+        retry_sha = get_remote_file_sha(repo_path)
+        if retry_sha and retry_sha != existing_sha:
+            response = requests.put(url, headers=get_github_headers(), json=build_payload(retry_sha), timeout=30)
+
     return response, repo_path
+
+
+def delete_file_from_github(repo_path: str) -> bool:
+    """주어진 경로의 파일을 GitHub에서 삭제한다. 파일이 없으면 아무 것도 하지 않는다."""
+    sha = get_remote_file_sha(repo_path)
+    if not sha:
+        return False
+    owner, repo, branch = get_repo_info()
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{quote(repo_path, safe='/')}"
+    payload = {"message": f"Remove file: {repo_path}", "sha": sha, "branch": branch}
+    try:
+        response = requests.delete(url, headers=get_github_headers(), json=payload, timeout=15)
+    except requests.RequestException:
+        return False
+    return response.status_code == 200
 
 
 def clear_github_cache() -> None:
     st.cache_data.clear()
+
+
+# ---------------------------
+# 3-1. 사용자별 학습 진행 저장/불러오기 (GitHub 로그)
+# ---------------------------
+# 사용자가 "내 번호"를 입력하면, 그 번호를 파일명 삼아 진행 상황을 GitHub 저장소의
+# progress_logs/{번호}/{파트}.json 경로에 저장한다. 사용자마다 별도 파일을 쓰기 때문에
+# 20명이 동시에 접속해도 서로의 진행 상황을 덮어쓸 위험이 없다.
+PROGRESS_FOLDER = "progress_logs"
+
+
+def sanitize_user_id(raw_id: str) -> str:
+    """사용자가 입력한 번호에서 파일 경로에 쓸 수 없는 문자를 제거해 안전한 식별자로 만든다."""
+    cleaned = re.sub(r"[^0-9A-Za-z_\-]", "", str(raw_id).strip())
+    return cleaned[:40]
+
+
+def progress_file_path(user_id: str, part: str) -> str:
+    return f"{PROGRESS_FOLDER}/{user_id}/{part}.json"
+
+
+def save_user_progress(user_id: str, part: str, data: dict) -> bool:
+    """
+    현재 학습/연습/시험/지문 진행 상태를 GitHub에 JSON으로 저장한다.
+    저장에 실패하더라도(네트워크 오류 등) 학습 자체가 멈추지 않도록 예외를 삼키고 False를 반환한다.
+    """
+    if not user_id:
+        return False
+    try:
+        payload = dict(data)
+        payload["_saved_at"] = datetime.now(KOREA_TZ).isoformat()
+        text_content = json.dumps(payload, ensure_ascii=False, indent=2)
+        resp, _ = upload_text_to_github(f"{PROGRESS_FOLDER}/{user_id}", f"{part}.json", text_content)
+        return resp.status_code in (200, 201)
+    except Exception:
+        return False
+
+
+def load_user_progress(user_id: str, part: str):
+    """저장된 진행 상태를 불러온다. 항상 최신 값을 읽기 위해 캐시를 타지 않는다."""
+    if not user_id:
+        return None
+    owner, repo, branch = get_repo_info()
+    repo_path = progress_file_path(user_id, part)
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{quote(repo_path, safe='/')}?ref={quote(branch)}"
+    try:
+        response = requests.get(url, headers=get_github_headers(), timeout=15)
+    except requests.RequestException:
+        return None
+    if response.status_code != 200:
+        return None
+    try:
+        raw = base64.b64decode(response.json().get("content", "")).decode("utf-8")
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+def delete_user_progress(user_id: str, part: str) -> None:
+    """해당 파트를 끝까지 완료했을 때, 다음에 또 '이어서 하기'가 뜨지 않도록 저장 기록을 지운다."""
+    if not user_id:
+        return
+    try:
+        delete_file_from_github(progress_file_path(user_id, part))
+    except Exception:
+        pass
+
+
+def render_user_id_gate() -> None:
+    """
+    사용자 고유 번호를 입력받는다. 번호를 입력하면 이후 학습/연습/시험/지문 진행 상황이
+    자동으로 GitHub에 저장되어, 다음날 같은 번호로 접속했을 때 이어서 할 수 있다.
+    번호를 입력하지 않아도 앱은 그대로 동작하며, 그 경우 진행 상황만 저장되지 않는다.
+    """
+    query_uid = st.query_params.get("uid", "")
+    if not st.session_state.user_id and query_uid:
+        st.session_state.user_id = sanitize_user_id(query_uid)
+
+    with st.expander("내 번호 (진행 상황 저장)", expanded=not st.session_state.user_id):
+        st.caption("번호를 입력하면 학습/연습/시험/지문 진행 상황이 자동 저장되어, 다음에 이어서 할 수 있습니다.")
+        input_id = st.text_input("내 번호 (숫자 등 자유롭게)", value=st.session_state.user_id, key="user_id_input")
+        clean_id = sanitize_user_id(input_id)
+        if clean_id != st.session_state.user_id:
+            st.session_state.user_id = clean_id
+            if clean_id:
+                st.query_params["uid"] = clean_id
+            st.rerun()
+        if st.session_state.user_id:
+            st.success(f"현재 번호: {st.session_state.user_id} (이 번호로 진행 상황이 저장됩니다)")
 
 
 # ---------------------------
@@ -646,6 +786,8 @@ def render_sidebar() -> list:
             if col3.button("초기화", use_container_width=True):
                 st.session_state.font_scale = 1.0; st.rerun()
 
+        render_user_id_gate()
+
         st.write("---")
         st.subheader("학습 자료 선택")
 
@@ -767,12 +909,34 @@ def render_study_setup() -> None:
     st.caption("단축키: 스페이스바 = 다음 단어, H = 힌트 보기")
     selected_files = render_sidebar()
 
+    if st.session_state.user_id:
+        saved = load_user_progress(st.session_state.user_id, "study")
+        if saved and saved.get("words"):
+            st.info(
+                f"저장된 진행이 있습니다: {saved.get('study_index', 0) + 1} / {len(saved['words'])}번째 단어"
+                f" (파일: {', '.join(saved.get('files_label', [])) or '알 수 없음'})"
+            )
+            if st.button("이어서 학습하기", use_container_width=True, key="resume_study_btn"):
+                st.session_state.words = saved["words"]
+                st.session_state.current_files_label = saved.get("files_label", [])
+                st.session_state.study_index = saved.get("study_index", 0)
+                st.session_state.study_show_hint = False
+                st.session_state.is_studying = True
+                st.session_state.active_part = "study"
+                st.rerun()
+
     if st.button("학습 시작", use_container_width=True):
         if load_data(selected_files):
             st.session_state.is_studying = True
             st.session_state.active_part = "study"
             st.session_state.study_index = 0
             st.session_state.study_show_hint = False
+            if st.session_state.user_id:
+                save_user_progress(st.session_state.user_id, "study", {
+                    "words": st.session_state.words,
+                    "files_label": st.session_state.current_files_label,
+                    "study_index": 0,
+                })
             st.rerun()
 
 
@@ -786,6 +950,12 @@ def render_study_active() -> None:
             if st.button("다음 단어", use_container_width=True, key="study_next_btn"):
                 st.session_state.study_index += 1
                 st.session_state.study_show_hint = False
+                if st.session_state.user_id:
+                    save_user_progress(st.session_state.user_id, "study", {
+                        "words": st.session_state.words,
+                        "files_label": st.session_state.current_files_label,
+                        "study_index": st.session_state.study_index,
+                    })
                 st.rerun()
             if st.button("힌트 보기", use_container_width=True, disabled=not has_hint, key="study_hint_btn"):
                 st.session_state.study_show_hint = True
@@ -812,6 +982,8 @@ def render_study_active() -> None:
         )
     else:
         st.success("모든 단어 학습을 완료했습니다.")
+        if st.session_state.user_id:
+            delete_user_progress(st.session_state.user_id, "study")
         if st.button("다시 처음부터", use_container_width=True):
             st.session_state.study_index = 0
             st.session_state.study_show_hint = False
@@ -827,6 +999,27 @@ def render_practice_setup() -> None:
     st.header("연습 파트 (망각 곡선 적용)")
     st.caption("단축키: 스페이스바 = 정답(힌트도 함께 표시), H = 힌트, Z=100 X=60 C=40 V=0")
     selected_files = render_sidebar()
+
+    if st.session_state.user_id:
+        saved = load_user_progress(st.session_state.user_id, "practice")
+        if saved and (saved.get("queue") or saved.get("current_word")):
+            st.info(
+                f"저장된 연습 진행이 있습니다: {saved.get('done_count', 0)} / {saved.get('total_count', 0)} 완료"
+                f" (파일: {', '.join(saved.get('files_label', [])) or '알 수 없음'})"
+            )
+            if st.button("이어서 연습하기", use_container_width=True, key="resume_practice_btn"):
+                st.session_state.current_files_label = saved.get("files_label", [])
+                st.session_state.practice_mode = saved.get("mode", "random")
+                st.session_state.practice_queue = saved.get("queue", [])
+                st.session_state.current_practice_word = saved.get("current_word")
+                st.session_state.practice_display_side = saved.get("display_side", 0)
+                st.session_state.practice_total_count = saved.get("total_count", 0)
+                st.session_state.practice_done_count = saved.get("done_count", 0)
+                st.session_state.practice_show_answer = False
+                st.session_state.practice_show_hint = False
+                st.session_state.is_practicing = True
+                st.session_state.active_part = "practice"
+                st.rerun()
 
     with mobile_stack_container("practice_mode_btns"):
         c1, c2, c3 = st.columns(3)
@@ -848,6 +1041,17 @@ def render_practice_setup() -> None:
         if st.session_state.practice_queue:
             st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
             st.session_state.practice_display_side = get_display_side(mode)
+
+        if st.session_state.user_id:
+            save_user_progress(st.session_state.user_id, "practice", {
+                "files_label": st.session_state.current_files_label,
+                "mode": st.session_state.practice_mode,
+                "queue": st.session_state.practice_queue,
+                "current_word": st.session_state.current_practice_word,
+                "display_side": st.session_state.practice_display_side,
+                "total_count": st.session_state.practice_total_count,
+                "done_count": st.session_state.practice_done_count,
+            })
         st.rerun()
 
 
@@ -879,6 +1083,17 @@ def render_practice_active() -> None:
                 else:
                     st.session_state.current_practice_word = None
 
+                if st.session_state.user_id:
+                    save_user_progress(st.session_state.user_id, "practice", {
+                        "files_label": st.session_state.current_files_label,
+                        "mode": st.session_state.practice_mode,
+                        "queue": st.session_state.practice_queue,
+                        "current_word": st.session_state.current_practice_word,
+                        "display_side": st.session_state.practice_display_side,
+                        "total_count": st.session_state.practice_total_count,
+                        "done_count": st.session_state.practice_done_count,
+                    })
+
             s1, s2, s3, s4 = st.columns(4)
             with s1:
                 if st.button("완벽함 (100)", disabled=not is_ans_shown, use_container_width=True, key="practice_100"): apply_score(100); st.rerun()
@@ -908,6 +1123,8 @@ def render_practice_active() -> None:
         )
     else:
         st.success("대기열의 모든 연습을 완료했습니다.")
+        if st.session_state.user_id:
+            delete_user_progress(st.session_state.user_id, "practice")
 
     render_exit_button("연습 종료하기")
 
@@ -919,6 +1136,28 @@ def render_exam_setup() -> None:
     st.header("시험 파트")
     st.caption("단축키: 스페이스바 = 정답 확인(힌트도 함께 표시), Z = 맞음, X = 틀림")
     selected_files = render_sidebar()
+
+    if st.session_state.user_id:
+        saved = load_user_progress(st.session_state.user_id, "exam")
+        if saved and (saved.get("queue") or saved.get("current_word")):
+            st.info(
+                f"저장된 시험 진행이 있습니다: {saved.get('current_number', 0)} / {saved.get('total_count', 0)}"
+                f" (맞음 {saved.get('correct_count', 0)}, 틀림 {saved.get('wrong_count', 0)})"
+            )
+            if st.button("이어서 시험보기", use_container_width=True, key="resume_exam_btn"):
+                st.session_state.current_files_label = saved.get("files_label", [])
+                st.session_state.exam_mode = saved.get("mode", "random")
+                st.session_state.exam_queue = saved.get("queue", [])
+                st.session_state.current_exam_word = saved.get("current_word")
+                st.session_state.exam_display_side = saved.get("display_side", 0)
+                st.session_state.exam_total_count = saved.get("total_count", 0)
+                st.session_state.exam_current_number = saved.get("current_number", 0)
+                st.session_state.exam_correct_count = saved.get("correct_count", 0)
+                st.session_state.exam_wrong_count = saved.get("wrong_count", 0)
+                st.session_state.exam_show_answer = False
+                st.session_state.is_examining = True
+                st.session_state.active_part = "exam"
+                st.rerun()
 
     total_words = 0
     if selected_files:
@@ -972,6 +1211,19 @@ def render_exam_setup() -> None:
                 st.session_state.current_exam_word = st.session_state.exam_queue.pop(0)
                 st.session_state.exam_current_number += 1
                 st.session_state.exam_display_side = get_display_side(mode)
+
+            if st.session_state.user_id:
+                save_user_progress(st.session_state.user_id, "exam", {
+                    "files_label": st.session_state.current_files_label,
+                    "mode": st.session_state.exam_mode,
+                    "queue": st.session_state.exam_queue,
+                    "current_word": st.session_state.current_exam_word,
+                    "display_side": st.session_state.exam_display_side,
+                    "total_count": st.session_state.exam_total_count,
+                    "current_number": st.session_state.exam_current_number,
+                    "correct_count": st.session_state.exam_correct_count,
+                    "wrong_count": st.session_state.exam_wrong_count,
+                })
             st.rerun()
 
 
@@ -999,6 +1251,19 @@ def render_exam_active() -> None:
                 else:
                     st.session_state.current_exam_word = None
 
+                if st.session_state.user_id:
+                    save_user_progress(st.session_state.user_id, "exam", {
+                        "files_label": st.session_state.current_files_label,
+                        "mode": st.session_state.exam_mode,
+                        "queue": st.session_state.exam_queue,
+                        "current_word": st.session_state.current_exam_word,
+                        "display_side": st.session_state.exam_display_side,
+                        "total_count": st.session_state.exam_total_count,
+                        "current_number": st.session_state.exam_current_number,
+                        "correct_count": st.session_state.exam_correct_count,
+                        "wrong_count": st.session_state.exam_wrong_count,
+                    })
+
             c2, c3 = st.columns(2)
             with c2:
                 if st.button("맞음", disabled=not is_ans_shown, use_container_width=True, key="exam_correct_btn"): next_exam(True); st.rerun()
@@ -1024,6 +1289,8 @@ def render_exam_active() -> None:
         total = max(1, st.session_state.exam_total_count)
         accuracy = round(st.session_state.exam_correct_count / total * 100, 1)
         st.success(f"시험 종료. 최종 성적: {st.session_state.exam_correct_count} / {st.session_state.exam_total_count} (정답률 {accuracy}%)")
+        if st.session_state.user_id:
+            delete_user_progress(st.session_state.user_id, "exam")
 
     render_exit_button("시험 종료하기")
 
@@ -1094,10 +1361,12 @@ def render_wordbook_part() -> None:
                 resp, path = upload_text_to_github(target_folder, safe_name, manual_text)
                 if resp.status_code in (200, 201):
                     clear_github_cache()
+                    st.toast(f"업로드 완료: {path}", icon="✅")
                     st.success(f"업로드 완료: {path} ({len(parsed)}개 단어)")
                     st.rerun()
                 else:
-                    st.error(f"업로드 실패 (status {resp.status_code}): {resp.text[:200]}")
+                    st.toast("업로드 실패", icon="⚠️")
+                    st.error(f"업로드 실패 (status {resp.status_code}, 경로: {path}): {resp.text[:200]}")
 
     with tab2:
         uploaded_file = st.file_uploader("txt 파일 선택", type=["txt"])
@@ -1123,10 +1392,12 @@ def render_wordbook_part() -> None:
                     resp, path = upload_text_to_github(target_folder, safe_name, up_text)
                     if resp.status_code in (200, 201):
                         clear_github_cache()
+                        st.toast(f"업로드 완료: {path}", icon="✅")
                         st.success(f"업로드 완료: {path} ({len(parsed)}개 단어)")
                         st.rerun()
                     else:
-                        st.error(f"업로드 실패 (status {resp.status_code}): {resp.text[:200]}")
+                        st.toast("업로드 실패", icon="⚠️")
+                        st.error(f"업로드 실패 (status {resp.status_code}, 경로: {path}): {resp.text[:200]}")
 
 
 # ---------------------------
@@ -1137,11 +1408,32 @@ def render_script_setup() -> None:
     st.caption("대화 및 지문을 순서대로 연상하며 외웁니다. 단축키: 스페이스바 = 다음 문장")
     selected_files = render_sidebar()
 
+    if st.session_state.user_id:
+        saved = load_user_progress(st.session_state.user_id, "script")
+        if saved and saved.get("lines"):
+            st.info(
+                f"저장된 진행이 있습니다: {saved.get('script_index', 0) + 1} / {len(saved['lines'])}번째 문장"
+                f" (파일: {', '.join(saved.get('files_label', [])) or '알 수 없음'})"
+            )
+            if st.button("이어서 외우기", use_container_width=True, key="resume_script_btn"):
+                st.session_state.script_lines = saved["lines"]
+                st.session_state.current_files_label = saved.get("files_label", [])
+                st.session_state.script_index = saved.get("script_index", 0)
+                st.session_state.is_scripting = True
+                st.session_state.active_part = "script"
+                st.rerun()
+
     if st.button("대본 학습 시작", use_container_width=True):
         if load_data(selected_files, is_script=True):
             st.session_state.is_scripting = True
             st.session_state.active_part = "script"
             st.session_state.script_index = 0
+            if st.session_state.user_id:
+                save_user_progress(st.session_state.user_id, "script", {
+                    "lines": st.session_state.script_lines,
+                    "files_label": st.session_state.current_files_label,
+                    "script_index": 0,
+                })
             st.rerun()
 
 
@@ -1154,10 +1446,22 @@ def render_script_active() -> None:
             with c1:
                 if st.button("이전 문장", disabled=(st.session_state.script_index == 0), use_container_width=True, key="script_prev_btn"):
                     st.session_state.script_index -= 1
+                    if st.session_state.user_id:
+                        save_user_progress(st.session_state.user_id, "script", {
+                            "lines": st.session_state.script_lines,
+                            "files_label": st.session_state.current_files_label,
+                            "script_index": st.session_state.script_index,
+                        })
                     st.rerun()
             with c2:
                 if st.button("다음 문장", use_container_width=True, key="script_next_btn"):
                     st.session_state.script_index += 1
+                    if st.session_state.user_id:
+                        save_user_progress(st.session_state.user_id, "script", {
+                            "lines": st.session_state.script_lines,
+                            "files_label": st.session_state.current_files_label,
+                            "script_index": st.session_state.script_index,
+                        })
                     st.rerun()
 
         st.markdown(f"""
@@ -1174,6 +1478,8 @@ def render_script_active() -> None:
         )
     else:
         st.success("모든 대본/지문 학습을 완료했습니다.")
+        if st.session_state.user_id:
+            delete_user_progress(st.session_state.user_id, "script")
         if st.button("다시 처음부터", use_container_width=True):
             st.session_state.script_index = 0
             st.rerun()
