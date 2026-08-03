@@ -163,7 +163,7 @@ KMOVE(해외취업연수) 과정 중 단어 암기에 어려움을 느끼는 연
 - 파일 덮어쓰기 시 GitHub API가 요구하는 `sha` 값을 캐시를 거치지 않고 실시간으로 재조회해, "sha wasn't supplied" 오류를 방지하는 재시도 로직 포함
 - 단어장 업로드는 `hmac.compare_digest`로 비밀번호를 검증해, 권한 없는 사용자가 공유 저장소를 임의로 수정하지 못하도록 보호
 
- 4. 사용 기술 스택
+ 4. 사용 기술 스택.
 
 - 언어/프레임워크: Python, Streamlit
 - 백엔드/저장소: GitHub REST API(Contents API) — DB 대체
