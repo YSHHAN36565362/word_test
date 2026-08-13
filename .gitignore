@@ -1,0 +1,6 @@
+.DS_Store
+**/.DS_Store
+.streamlit/secrets.toml
+images/_archive/
+__pycache__/
+*.pyc
