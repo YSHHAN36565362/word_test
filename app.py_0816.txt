@@ -17,9 +17,6 @@ st.set_page_config(
 )
 
 KOREA_TZ = ZoneInfo("Asia/Seoul")
-PROGRESS_FOLDER = "progress_logs"
-WRONGNOTE_FOLDER = "wrong_notes"  # [신규] 시험 오답만 모아두는 GitHub 폴더
-STATS_FOLDER = "study_stats"      # [신규] 일자별 학습 통계 로그 폴더
 
 
 # ---------------------------
@@ -29,7 +26,6 @@ def init_session_state() -> None:
     defaults = {
         "words": [],
         "current_files_label": [],
-        "favorite_words": [],  # [신규] 즐겨찾기(별표) 표시한 단어 (word 문자열 집합)
 
         "study_index": 0,
         "is_studying": False,
@@ -44,7 +40,6 @@ def init_session_state() -> None:
         "practice_mode": "random",
         "practice_show_answer": False,
         "practice_show_hint": False,
-        "practice_result_saved": False,  # [신규] 연습 종료 시 통계 저장을 1회만 수행하기 위한 플래그
 
         "exam_queue": [],
         "current_exam_word": None,
@@ -57,8 +52,6 @@ def init_session_state() -> None:
         "exam_show_answer": False,
         "exam_display_side": 0,
         "exam_total_count_input": 10,
-        "exam_wrong_words": [],  # [신규] 이번 시험 회차에서 "틀림"으로 채점된 단어 목록
-        "exam_result_saved": False,  # [신규] 시험 종료 시 오답노트/통계 저장을 1회만 수행하기 위한 플래그
 
         "font_scale": 1.0,
         "theme_mode": "다크 모드",
@@ -74,9 +67,6 @@ def init_session_state() -> None:
         "current_page_select": "학습",
 
         "user_id": "",
-
-        # [신규] 상단 라디오 대신 쓸 페이지 네비게이션에서, "통계" 탭 캐시
-        "stats_summary_cache": None,
     }
 
     for key, value in defaults.items():
@@ -527,7 +517,7 @@ def clear_github_cache() -> None:
 # 사용자가 "내 번호"를 입력하면, 그 번호를 파일명 삼아 진행 상황을 GitHub 저장소의
 # progress_logs/{번호}/{파트}.json 경로에 저장한다. 사용자마다 별도 파일을 쓰기 때문에
 # 20명이 동시에 접속해도 서로의 진행 상황을 덮어쓸 위험이 없다.
-# (PROGRESS_FOLDER 상수는 파일 상단으로 이동하여 다른 폴더 상수들과 함께 관리한다.)
+PROGRESS_FOLDER = "progress_logs"
 
 
 def sanitize_user_id(raw_id: str) -> str:
@@ -577,155 +567,12 @@ def load_user_progress(user_id: str, part: str):
         return None
 
 
-def save_practice_progress() -> None:
-    """[코드 개선] practice 파트에서 반복되던 저장 payload 조립 로직을 한 곳으로 모음."""
-    if not st.session_state.user_id:
-        return
-    save_user_progress(st.session_state.user_id, "practice", {
-        "files_label": st.session_state.current_files_label,
-        "mode": st.session_state.practice_mode,
-        "queue": st.session_state.practice_queue,
-        "current_word": st.session_state.current_practice_word,
-        "display_side": st.session_state.practice_display_side,
-        "total_count": st.session_state.practice_total_count,
-        "done_count": st.session_state.practice_done_count,
-    })
-
-
-def save_exam_progress() -> None:
-    """[코드 개선] exam 파트에서 반복되던 저장 payload 조립 로직을 한 곳으로 모음."""
-    if not st.session_state.user_id:
-        return
-    save_user_progress(st.session_state.user_id, "exam", {
-        "files_label": st.session_state.current_files_label,
-        "mode": st.session_state.exam_mode,
-        "queue": st.session_state.exam_queue,
-        "current_word": st.session_state.current_exam_word,
-        "display_side": st.session_state.exam_display_side,
-        "total_count": st.session_state.exam_total_count,
-        "current_number": st.session_state.exam_current_number,
-        "correct_count": st.session_state.exam_correct_count,
-        "wrong_count": st.session_state.exam_wrong_count,
-    })
-
-
 def delete_user_progress(user_id: str, part: str) -> None:
     """해당 파트를 끝까지 완료했을 때, 다음에 또 '이어서 하기'가 뜨지 않도록 저장 기록을 지운다."""
     if not user_id:
         return
     try:
         delete_file_from_github(progress_file_path(user_id, part))
-    except Exception:
-        pass
-
-
-# ---------------------------
-# 3-2. [신규] 오답 노트 & 학습 통계 (GitHub 로그)
-# ---------------------------
-# 시험 파트에서 "틀림"으로 채점된 단어를 모아 wrong_notes/{내번호}.json 에 누적 저장한다.
-# 오답 노트는 화면에서 "오답만 다시 풀기"로 바로 연습에 투입할 수 있다.
-def wrongnote_path(user_id: str) -> str:
-    return f"{WRONGNOTE_FOLDER}/{user_id}.json"
-
-
-def load_wrong_notes(user_id: str) -> list:
-    if not user_id:
-        return []
-    owner, repo, branch = get_repo_info()
-    repo_path = wrongnote_path(user_id)
-    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{quote(repo_path, safe='/')}?ref={quote(branch)}"
-    try:
-        response = requests.get(url, headers=get_github_headers(), timeout=15)
-    except requests.RequestException:
-        return []
-    if response.status_code != 200:
-        return []
-    try:
-        raw = base64.b64decode(response.json().get("content", "")).decode("utf-8")
-        data = json.loads(raw)
-        return data.get("words", [])
-    except Exception:
-        return []
-
-
-def save_wrong_notes(user_id: str, words: list) -> bool:
-    """오답 단어 리스트를 (word, meaning, hint) 기준으로 중복 제거해 통째로 덮어쓴다."""
-    if not user_id:
-        return False
-    seen, deduped = set(), []
-    for w in words:
-        key = (w.get("word", ""), w.get("meaning", ""), w.get("hint", ""))
-        if key not in seen:
-            seen.add(key)
-            deduped.append(w)
-    try:
-        payload = {"words": deduped, "_updated_at": datetime.now(KOREA_TZ).isoformat()}
-        text_content = json.dumps(payload, ensure_ascii=False, indent=2)
-        resp, _ = upload_text_to_github(WRONGNOTE_FOLDER, f"{user_id}.json", text_content)
-        return resp.status_code in (200, 201)
-    except Exception:
-        return False
-
-
-def add_words_to_wrong_notes(user_id: str, new_wrong_words: list) -> None:
-    """시험이 끝났을 때, 이번 회차의 오답들을 기존 오답 노트에 합쳐 저장한다."""
-    if not user_id or not new_wrong_words:
-        return
-    existing = load_wrong_notes(user_id)
-    save_wrong_notes(user_id, existing + new_wrong_words)
-
-
-def remove_word_from_wrong_notes(user_id: str, word_data: dict) -> None:
-    """오답 노트 화면에서 개별 단어를 '이제 외웠음' 처리로 제거할 때 사용."""
-    if not user_id:
-        return
-    existing = load_wrong_notes(user_id)
-    key = (word_data.get("word", ""), word_data.get("meaning", ""), word_data.get("hint", ""))
-    filtered = [w for w in existing if (w.get("word", ""), w.get("meaning", ""), w.get("hint", "")) != key]
-    save_wrong_notes(user_id, filtered)
-
-
-# 학습 통계: 시험/연습을 마칠 때마다 그날 날짜로 한 줄씩 누적 기록한다.
-# study_stats/{내번호}.json = [{"date": "2026-08-17", "part": "exam", "total": 10, "correct": 8}, ...]
-def stats_path(user_id: str) -> str:
-    return f"{STATS_FOLDER}/{user_id}.json"
-
-
-def load_study_stats(user_id: str) -> list:
-    if not user_id:
-        return []
-    owner, repo, branch = get_repo_info()
-    repo_path = stats_path(user_id)
-    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{quote(repo_path, safe='/')}?ref={quote(branch)}"
-    try:
-        response = requests.get(url, headers=get_github_headers(), timeout=15)
-    except requests.RequestException:
-        return []
-    if response.status_code != 200:
-        return []
-    try:
-        raw = base64.b64decode(response.json().get("content", "")).decode("utf-8")
-        return json.loads(raw)
-    except Exception:
-        return []
-
-
-def append_study_stat(user_id: str, part: str, total: int, correct: int) -> None:
-    """시험/연습 종료 시점에 오늘 기록 한 줄을 추가한다. 실패해도 학습 흐름은 막지 않는다."""
-    if not user_id:
-        return
-    try:
-        records = load_study_stats(user_id)
-        records.append({
-            "date": datetime.now(KOREA_TZ).strftime("%Y-%m-%d"),
-            "part": part,
-            "total": total,
-            "correct": correct,
-        })
-        # 기록이 지나치게 길어지지 않도록 최근 200건만 보관
-        records = records[-200:]
-        text_content = json.dumps(records, ensure_ascii=False, indent=2)
-        upload_text_to_github(STATS_FOLDER, f"{user_id}.json", text_content)
     except Exception:
         pass
 
@@ -1030,12 +877,6 @@ def render_sidebar() -> list:
             if st.session_state.get(f"filechk_{f['label']}_widget", False)
         ]
 
-        # [신규] 몇 개 파일을 골랐는지 즉시 보여줘서, 스크롤을 다시 올리지 않아도 알 수 있게 함
-        if selected_labels:
-            st.success(f"✅ {len(selected_labels)}개 파일 선택됨")
-        else:
-            st.caption("선택된 파일이 없습니다.")
-
         return [f for f in all_files if f["label"] in selected_labels]
 
 
@@ -1105,39 +946,24 @@ def render_study_active() -> None:
         word_data = st.session_state.words[st.session_state.study_index]
         has_hint = bool(word_data["hint"].strip())
 
-        is_favorite = word_data["word"] in st.session_state.favorite_words
-
         with sticky_action_bar("study_sticky_bar"):
-            b1, b2, b3 = st.columns([2, 2, 1])
-            with b1:
-                if st.button("다음 단어", use_container_width=True, key="study_next_btn"):
-                    st.session_state.study_index += 1
-                    st.session_state.study_show_hint = False
-                    if st.session_state.user_id:
-                        save_user_progress(st.session_state.user_id, "study", {
-                            "words": st.session_state.words,
-                            "files_label": st.session_state.current_files_label,
-                            "study_index": st.session_state.study_index,
-                        })
-                    st.rerun()
-            with b2:
-                if st.button("힌트 보기", use_container_width=True, disabled=not has_hint, key="study_hint_btn"):
-                    st.session_state.study_show_hint = True
-                    st.rerun()
-            with b3:
-                # [신규] 즐겨찾기 토글 - 헷갈리는 단어를 표시해두고 나중에 모아 볼 수 있음
-                star_label = "★" if is_favorite else "☆"
-                if st.button(star_label, use_container_width=True, key="study_favorite_btn"):
-                    if is_favorite:
-                        st.session_state.favorite_words.remove(word_data["word"])
-                    else:
-                        st.session_state.favorite_words.append(word_data["word"])
-                    st.rerun()
+            if st.button("다음 단어", use_container_width=True, key="study_next_btn"):
+                st.session_state.study_index += 1
+                st.session_state.study_show_hint = False
+                if st.session_state.user_id:
+                    save_user_progress(st.session_state.user_id, "study", {
+                        "words": st.session_state.words,
+                        "files_label": st.session_state.current_files_label,
+                        "study_index": st.session_state.study_index,
+                    })
+                st.rerun()
+            if st.button("힌트 보기", use_container_width=True, disabled=not has_hint, key="study_hint_btn"):
+                st.session_state.study_show_hint = True
+                st.rerun()
 
-        fav_badge = " ⭐" if is_favorite else ""
         st.markdown(f"""
             <div class="study-card qa-compact">
-                <div class="word-text">{word_data['word']}{fav_badge}</div>
+                <div class="word-text">{word_data['word']}</div>
                 <div class="meaning-text">{word_data['meaning']}</div>
             </div>
         """, unsafe_allow_html=True)
@@ -1156,8 +982,6 @@ def render_study_active() -> None:
         )
     else:
         st.success("모든 단어 학습을 완료했습니다.")
-        if st.session_state.favorite_words:
-            st.info(f"⭐ 이번 세션에서 즐겨찾기한 단어 {len(st.session_state.favorite_words)}개가 있습니다. (연습/시험에서 다시 만날 수 있어요)")
         if st.session_state.user_id:
             delete_user_progress(st.session_state.user_id, "study")
         if st.button("다시 처음부터", use_container_width=True):
@@ -1193,7 +1017,6 @@ def render_practice_setup() -> None:
                 st.session_state.practice_done_count = saved.get("done_count", 0)
                 st.session_state.practice_show_answer = False
                 st.session_state.practice_show_hint = False
-                st.session_state.practice_result_saved = False
                 st.session_state.is_practicing = True
                 st.session_state.active_part = "practice"
                 st.rerun()
@@ -1214,13 +1037,21 @@ def render_practice_setup() -> None:
         st.session_state.practice_mode = mode
         st.session_state.practice_show_answer = False
         st.session_state.practice_show_hint = False
-        st.session_state.practice_result_saved = False
 
         if st.session_state.practice_queue:
             st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
             st.session_state.practice_display_side = get_display_side(mode)
 
-        save_practice_progress()
+        if st.session_state.user_id:
+            save_user_progress(st.session_state.user_id, "practice", {
+                "files_label": st.session_state.current_files_label,
+                "mode": st.session_state.practice_mode,
+                "queue": st.session_state.practice_queue,
+                "current_word": st.session_state.current_practice_word,
+                "display_side": st.session_state.practice_display_side,
+                "total_count": st.session_state.practice_total_count,
+                "done_count": st.session_state.practice_done_count,
+            })
         st.rerun()
 
 
@@ -1252,7 +1083,16 @@ def render_practice_active() -> None:
                 else:
                     st.session_state.current_practice_word = None
 
-                save_practice_progress()
+                if st.session_state.user_id:
+                    save_user_progress(st.session_state.user_id, "practice", {
+                        "files_label": st.session_state.current_files_label,
+                        "mode": st.session_state.practice_mode,
+                        "queue": st.session_state.practice_queue,
+                        "current_word": st.session_state.current_practice_word,
+                        "display_side": st.session_state.practice_display_side,
+                        "total_count": st.session_state.practice_total_count,
+                        "done_count": st.session_state.practice_done_count,
+                    })
 
             s1, s2, s3, s4 = st.columns(4)
             with s1:
@@ -1284,12 +1124,6 @@ def render_practice_active() -> None:
     else:
         st.success("대기열의 모든 연습을 완료했습니다.")
         if st.session_state.user_id:
-            if not st.session_state.get("practice_result_saved", False):
-                st.session_state.practice_result_saved = True
-                append_study_stat(
-                    st.session_state.user_id, "practice",
-                    st.session_state.practice_total_count, st.session_state.practice_total_count
-                )
             delete_user_progress(st.session_state.user_id, "practice")
 
     render_exit_button("연습 종료하기")
@@ -1321,8 +1155,6 @@ def render_exam_setup() -> None:
                 st.session_state.exam_correct_count = saved.get("correct_count", 0)
                 st.session_state.exam_wrong_count = saved.get("wrong_count", 0)
                 st.session_state.exam_show_answer = False
-                st.session_state.exam_wrong_words = []
-                st.session_state.exam_result_saved = False
                 st.session_state.is_examining = True
                 st.session_state.active_part = "exam"
                 st.rerun()
@@ -1369,8 +1201,6 @@ def render_exam_setup() -> None:
             st.session_state.exam_correct_count = 0
             st.session_state.exam_wrong_count = 0
             st.session_state.exam_show_answer = False
-            st.session_state.exam_wrong_words = []  # [신규] 새 시험 시작 시 오답 목록 초기화
-            st.session_state.exam_result_saved = False
 
             exam_words = list(st.session_state.words)
             actual_count = min(st.session_state.exam_total_count_input, len(exam_words))
@@ -1382,7 +1212,18 @@ def render_exam_setup() -> None:
                 st.session_state.exam_current_number += 1
                 st.session_state.exam_display_side = get_display_side(mode)
 
-            save_exam_progress()
+            if st.session_state.user_id:
+                save_user_progress(st.session_state.user_id, "exam", {
+                    "files_label": st.session_state.current_files_label,
+                    "mode": st.session_state.exam_mode,
+                    "queue": st.session_state.exam_queue,
+                    "current_word": st.session_state.current_exam_word,
+                    "display_side": st.session_state.exam_display_side,
+                    "total_count": st.session_state.exam_total_count,
+                    "current_number": st.session_state.exam_current_number,
+                    "correct_count": st.session_state.exam_correct_count,
+                    "wrong_count": st.session_state.exam_wrong_count,
+                })
             st.rerun()
 
 
@@ -1401,8 +1242,6 @@ def render_exam_active() -> None:
                     st.session_state.exam_correct_count += 1
                 else:
                     st.session_state.exam_wrong_count += 1
-                    # [신규] 틀린 단어를 이번 회차 오답 목록에 쌓아둔다 (시험 종료 시 오답 노트로 커밋)
-                    st.session_state.exam_wrong_words.append(cw)
 
                 st.session_state.exam_show_answer = False
                 if st.session_state.exam_queue:
@@ -1412,7 +1251,18 @@ def render_exam_active() -> None:
                 else:
                     st.session_state.current_exam_word = None
 
-                save_exam_progress()
+                if st.session_state.user_id:
+                    save_user_progress(st.session_state.user_id, "exam", {
+                        "files_label": st.session_state.current_files_label,
+                        "mode": st.session_state.exam_mode,
+                        "queue": st.session_state.exam_queue,
+                        "current_word": st.session_state.current_exam_word,
+                        "display_side": st.session_state.exam_display_side,
+                        "total_count": st.session_state.exam_total_count,
+                        "current_number": st.session_state.exam_current_number,
+                        "correct_count": st.session_state.exam_correct_count,
+                        "wrong_count": st.session_state.exam_wrong_count,
+                    })
 
             c2, c3 = st.columns(2)
             with c2:
@@ -1438,49 +1288,9 @@ def render_exam_active() -> None:
     else:
         total = max(1, st.session_state.exam_total_count)
         accuracy = round(st.session_state.exam_correct_count / total * 100, 1)
-
-        # [신규] 정답률에 따라 다른 톤으로 결과를 보여줘서 한눈에 체감되도록 함 (UX 개선)
-        if accuracy >= 90:
-            st.balloons()
-            st.success(f"🎉 시험 종료! {st.session_state.exam_correct_count} / {st.session_state.exam_total_count} (정답률 {accuracy}%) — 훌륭합니다!")
-        elif accuracy >= 70:
-            st.info(f"시험 종료. {st.session_state.exam_correct_count} / {st.session_state.exam_total_count} (정답률 {accuracy}%) — 조금만 더!")
-        else:
-            st.warning(f"시험 종료. {st.session_state.exam_correct_count} / {st.session_state.exam_total_count} (정답률 {accuracy}%) — 오답 노트로 복습해봐요.")
-
-        # [신규] 이번 시험이 처음 종료되는 시점에만(중복 저장 방지) 오답 노트 + 통계에 반영
-        if not st.session_state.get("exam_result_saved", False):
-            st.session_state.exam_result_saved = True
-            if st.session_state.user_id:
-                if st.session_state.exam_wrong_words:
-                    add_words_to_wrong_notes(st.session_state.user_id, st.session_state.exam_wrong_words)
-                append_study_stat(
-                    st.session_state.user_id, "exam",
-                    st.session_state.exam_total_count, st.session_state.exam_correct_count
-                )
-                delete_user_progress(st.session_state.user_id, "exam")
-
-        if st.session_state.exam_wrong_words:
-            st.caption(f"이번 시험에서 틀린 단어 {len(st.session_state.exam_wrong_words)}개가 오답 노트에 저장되었습니다.")
-            wc1, wc2 = st.columns(2)
-            with wc1:
-                if st.button("틀린 단어만 다시 풀기", use_container_width=True, key="retry_wrong_exam_btn"):
-                    st.session_state.exam_queue = list(st.session_state.exam_wrong_words[1:])
-                    st.session_state.current_exam_word = st.session_state.exam_wrong_words[0]
-                    st.session_state.exam_total_count = len(st.session_state.exam_wrong_words)
-                    st.session_state.exam_current_number = 1
-                    st.session_state.exam_correct_count = 0
-                    st.session_state.exam_wrong_count = 0
-                    st.session_state.exam_wrong_words = []
-                    st.session_state.exam_show_answer = False
-                    st.session_state.exam_display_side = get_display_side(st.session_state.exam_mode)
-                    st.session_state.exam_result_saved = False
-                    st.rerun()
-            with wc2:
-                if st.button("오답 노트 전체 보기", use_container_width=True, key="goto_wrongnote_btn"):
-                    exit_focus_mode()
-                    st.session_state.current_page_select = "오답 노트"
-                    st.rerun()
+        st.success(f"시험 종료. 최종 성적: {st.session_state.exam_correct_count} / {st.session_state.exam_total_count} (정답률 {accuracy}%)")
+        if st.session_state.user_id:
+            delete_user_progress(st.session_state.user_id, "exam")
 
     render_exit_button("시험 종료하기")
 
@@ -1678,131 +1488,7 @@ def render_script_active() -> None:
 
 
 # ---------------------------
-# 11. [신규] 오답 노트 파트
-# ---------------------------
-def render_wrongnote_part() -> None:
-    st.header("오답 노트")
-    st.caption("시험에서 틀린 단어가 자동으로 여기 쌓입니다. '이제 외웠어요'를 누르면 목록에서 제거됩니다.")
-
-    if not st.session_state.user_id:
-        st.info("오답 노트는 '내 번호'를 입력해야 사용할 수 있습니다. 사이드바에서 번호를 먼저 등록해주세요.")
-        render_sidebar()
-        return
-
-    words = load_wrong_notes(st.session_state.user_id)
-
-    if not words:
-        st.success("오답 노트가 비어 있습니다. 시험을 보면 틀린 단어가 자동으로 여기 쌓입니다.")
-        return
-
-    st.write(f"**총 {len(words)}개**의 단어가 오답 노트에 있습니다.")
-
-    top1, top2 = st.columns(2)
-    with top1:
-        if st.button("오답 노트로 연습 시작", use_container_width=True, key="wrongnote_practice_btn"):
-            st.session_state.words = list(words)
-            st.session_state.current_files_label = ["오답 노트"]
-            st.session_state.practice_queue = list(words)
-            st.session_state.practice_total_count = len(words)
-            st.session_state.practice_done_count = 0
-            st.session_state.practice_mode = "random"
-            st.session_state.practice_show_answer = False
-            st.session_state.practice_show_hint = False
-            st.session_state.practice_result_saved = False
-            if st.session_state.practice_queue:
-                st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-                st.session_state.practice_display_side = get_display_side("random")
-            st.session_state.is_practicing = True
-            st.session_state.active_part = "practice"
-            st.rerun()
-    with top2:
-        if st.button("오답 노트 전체 비우기", use_container_width=True, key="wrongnote_clear_btn"):
-            save_wrong_notes(st.session_state.user_id, [])
-            st.toast("오답 노트를 비웠습니다.", icon="🧹")
-            st.rerun()
-
-    st.write("---")
-    for idx, w in enumerate(words):
-        with st.container(border=True):
-            c1, c2 = st.columns([5, 1])
-            with c1:
-                st.markdown(f"**{w.get('word', '')}** — {w.get('meaning', '')}")
-                if w.get("hint", "").strip():
-                    with st.expander("힌트 보기"):
-                        st.write(w["hint"])
-            with c2:
-                if st.button("암기완료", key=f"wrongnote_done_{idx}", use_container_width=True):
-                    remove_word_from_wrong_notes(st.session_state.user_id, w)
-                    st.toast("오답 노트에서 제거했습니다.", icon="✅")
-                    st.rerun()
-
-
-# ---------------------------
-# 12. [신규] 학습 통계 대시보드 파트
-# ---------------------------
-def render_stats_part() -> None:
-    st.header("학습 통계")
-    st.caption("연습·시험을 마칠 때마다 자동으로 기록됩니다.")
-
-    if not st.session_state.user_id:
-        st.info("학습 통계는 '내 번호'를 입력해야 사용할 수 있습니다. 사이드바에서 번호를 먼저 등록해주세요.")
-        render_sidebar()
-        return
-
-    records = load_study_stats(st.session_state.user_id)
-    if not records:
-        st.info("아직 기록된 학습 데이터가 없습니다. 연습이나 시험을 완료하면 이곳에 통계가 쌓입니다.")
-        return
-
-    total_sessions = len(records)
-    exam_records = [r for r in records if r.get("part") == "exam"]
-    total_correct = sum(r.get("correct", 0) for r in exam_records)
-    total_questions = sum(r.get("total", 0) for r in exam_records)
-    overall_accuracy = round(total_correct / total_questions * 100, 1) if total_questions else 0.0
-
-    m1, m2, m3 = st.columns(3)
-    m1.metric("총 학습 세션", f"{total_sessions}회")
-    m2.metric("누적 시험 문항", f"{total_questions}개")
-    m3.metric("전체 시험 정답률", f"{overall_accuracy}%")
-
-    st.write("---")
-    st.subheader("일자별 기록 (최근 30건)")
-
-    # 날짜별로 묶어서 최근 순으로 보여준다. (외부 라이브러리 없이 표 형태로 표시)
-    daily = {}
-    for r in records:
-        d = r.get("date", "알 수 없음")
-        daily.setdefault(d, {"exam_total": 0, "exam_correct": 0, "practice_count": 0})
-        if r.get("part") == "exam":
-            daily[d]["exam_total"] += r.get("total", 0)
-            daily[d]["exam_correct"] += r.get("correct", 0)
-        else:
-            daily[d]["practice_count"] += 1
-
-    sorted_dates = sorted(daily.keys(), reverse=True)[:30]
-    for d in sorted_dates:
-        info = daily[d]
-        acc_txt = ""
-        if info["exam_total"] > 0:
-            acc = round(info["exam_correct"] / info["exam_total"] * 100, 1)
-            acc_txt = f" · 시험 정답률 {acc}% ({info['exam_correct']}/{info['exam_total']})"
-        practice_txt = f" · 연습 {info['practice_count']}회" if info["practice_count"] else ""
-        st.markdown(f"- **{d}**{acc_txt}{practice_txt}")
-
-    # 최근 정답률 추이를 st.line_chart로 간단히 시각화 (UX 개선: 숫자보다 그래프가 한눈에 들어옴)
-    if len(exam_records) >= 2:
-        st.write("---")
-        st.subheader("시험 정답률 추이")
-        chart_data = []
-        for r in exam_records[-20:]:
-            t = r.get("total", 0)
-            acc = round(r.get("correct", 0) / t * 100, 1) if t else 0
-            chart_data.append(acc)
-        st.line_chart(chart_data)
-
-
-# ---------------------------
-# 13. 메인 실행
+# 11. 메인 실행
 # ---------------------------
 def render_full_header() -> None:
     st.markdown("""
@@ -1837,7 +1523,7 @@ def main() -> None:
 
         page = st.radio(
             "파트 이동",
-            ["학습", "연습", "시험", "오답 노트", "학습 통계", "단어장 추가", "지문 외우기"],
+            ["학습", "연습", "시험", "단어장 추가", "지문 외우기"],
             horizontal=True,
             label_visibility="collapsed",
             key="current_page_select"
@@ -1849,10 +1535,6 @@ def main() -> None:
             render_practice_setup()
         elif page == "시험":
             render_exam_setup()
-        elif page == "오답 노트":
-            render_wrongnote_part()
-        elif page == "학습 통계":
-            render_stats_part()
         elif page == "단어장 추가":
             render_wordbook_part()
         elif page == "지문 외우기":
