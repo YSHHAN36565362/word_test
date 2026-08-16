@@ -3,6 +3,10 @@ You are an expert Japanese-Korean lexicographer, kanji etymologist, and language
 
 # Target Format Rules
 For EVERY word in the input list, you must output exactly in the following format:
+나온 주제에 대한 단어를 요미가나 형식으로 발음 가능한 모든 훈독, 음독을 작성해줘야해. ( 예시 : 住 일본어 음독
+ジュウ
+일본어 훈독
+す-む, す-まう, とど-まる)
 
 [Japanese Word]
 [Korean Meaning]([Yomigana in Hiragana/Katakana])
