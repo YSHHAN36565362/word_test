@@ -1526,6 +1526,20 @@ def get_default_title_prefix() -> str:
     return korea_now.strftime("%Y-%m-%d_")
 
 
+FILENAME_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")
+
+
+def extract_year_month(filename: str):
+    """
+    파일명 맨 앞의 'YYYY-MM-DD' 날짜를 읽어 (연도, 월) 튜플로 돌려준다.
+    날짜 형식이 없는 파일명(예: pagodaN2.txt)이면 None을 돌려준다.
+    """
+    m = FILENAME_DATE_RE.match(filename)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
 def build_word_pool(selected_files: list) -> list:
     seen = set()
     pool = []
@@ -1628,11 +1642,17 @@ def render_sidebar() -> list:
         if sub_folders:
             for sub in selected_subs:
                 path = f"word_list/{main_cat}/{sub}"
-                files = [{"path": f"{path}/{f}", "label": f"[{sub}] {f}"} for f in get_txt_files(path)]
+                files = [
+                    {"path": f"{path}/{f}", "label": f"[{sub}] {f}", "filename": f}
+                    for f in get_txt_files(path)
+                ]
                 groups[sub] = files
         else:
             path = f"word_list/{main_cat}"
-            files = [{"path": f"{path}/{f}", "label": f} for f in get_txt_files(path)]
+            files = [
+                {"path": f"{path}/{f}", "label": f, "filename": f}
+                for f in get_txt_files(path)
+            ]
             groups[main_cat] = files
 
         all_files = [f for files in groups.values() for f in files]
@@ -1678,9 +1698,33 @@ def render_sidebar() -> list:
                     st.rerun()
 
             st.markdown('<div class="file-check-row">', unsafe_allow_html=True)
+
+            # 파일명 맨 앞의 날짜(YYYY-MM-DD)를 기준으로 월별 묶음을 만든다.
+            # 날짜가 없는 파일명은 별도로 묶어 맨 아래에 둔다.
+            month_buckets = {}
             for f in files:
-                wk = f"filechk_{f['label']}_widget"
-                st.checkbox(f["label"], key=wk)
+                ym = extract_year_month(f["filename"])
+                month_buckets.setdefault(ym, []).append(f)
+
+            for ym in month_buckets:
+                month_buckets[ym].sort(key=lambda f: f["filename"], reverse=True)
+
+            def _month_sort_key(ym):
+                if ym is None:
+                    return (1, 0, 0)
+                year, month = ym
+                return (0, -year, -month)
+
+            sorted_months = sorted(month_buckets.keys(), key=_month_sort_key)
+
+            for i, ym in enumerate(sorted_months):
+                month_files = month_buckets[ym]
+                month_label = "날짜 없음" if ym is None else f"{ym[0]}년 {ym[1]}월"
+                with st.expander(f"{month_label} ({len(month_files)}개)", expanded=(i == 0 and ym is not None)):
+                    for f in month_files:
+                        wk = f"filechk_{f['label']}_widget"
+                        st.checkbox(f["filename"], key=wk)
+
             st.markdown('</div>', unsafe_allow_html=True)
 
         selected_labels = [
