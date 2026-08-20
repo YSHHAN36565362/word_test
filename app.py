@@ -509,6 +509,13 @@ def inject_floating_memo_window() -> None:
                 redraw();
             }
             function getPos(e) {
+                // e.target이 캔버스 자신일 때는(포인터 캡처가 성공했거나, 캔버스 위에 있을 때)
+                // 브라우저가 직접 계산해주는 offsetX/offsetY를 쓴다. 이 값은 테두리, 박스 모델,
+                // 배율(dpr) 등을 브라우저가 알아서 반영해서 주기 때문에 우리가 직접 계산하는 것보다 정확하다.
+                if (e.target === canvas) {
+                    return { x: e.offsetX, y: e.offsetY };
+                }
+                // 드물게 캡처가 실패해 포인터가 캔버스 밖으로 나간 경우에만 수동 계산으로 대체한다.
                 var rect = canvas.getBoundingClientRect();
                 return {
                     x: e.clientX - rect.left - canvas.clientLeft,
@@ -1881,8 +1888,11 @@ def render_practice_active() -> None:
                 if level != 100:
                     pos = requeue_position(len(st.session_state.practice_queue), level)
                     st.session_state.practice_queue.insert(pos, cw)
+                else:
+                    # 완벽함으로 채점된 단어만 큐에서 완전히 빠져나가므로,
+                    # 진행률(완료 개수)은 이 경우에만 올려야 실제 진행 상황과 맞는다.
+                    st.session_state.practice_done_count += 1
 
-                st.session_state.practice_done_count += 1
                 st.session_state.practice_show_answer = False
                 st.session_state.practice_show_hint = False
                 if st.session_state.practice_queue:
