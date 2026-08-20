@@ -20,6 +20,7 @@ KOREA_TZ = ZoneInfo("Asia/Seoul")
 PROGRESS_FOLDER = "progress_logs"
 WRONGNOTE_FOLDER = "wrong_notes"  # [신규] 시험 오답만 모아두는 GitHub 폴더
 STATS_FOLDER = "study_stats"      # [신규] 일자별 학습 통계 로그 폴더
+RADICAL_LIBRARY_FILE = "resources/radicals.json"  # [신규] 한자 구성요소(부수) 공용 사전
 
 
 # ---------------------------
@@ -360,14 +361,14 @@ def inject_floating_memo_window() -> None:
             var toggleBtn = doc.createElement("button");
             toggleBtn.id = "memo-toggle-btn";
             toggleBtn.title = "메모장 열기/닫기";
-            toggleBtn.textContent = "\u270F\uFE0F";
+            toggleBtn.textContent = "메모";
             doc.body.appendChild(toggleBtn);
 
             var win = doc.createElement("div");
             win.id = "memo-window";
             win.innerHTML =
-                '<div id="memo-titlebar"><span>\u270F\uFE0F 메모장</span>' +
-                '<button id="memo-close-btn" title="닫기">\u2715</button></div>' +
+                '<div id="memo-titlebar"><span>메모장</span>' +
+                '<button id="memo-close-btn" title="닫기">닫기</button></div>' +
                 '<div id="memo-toolbar">' +
                 '<button id="memo-undo-btn">되돌리기</button>' +
                 '<button id="memo-clear-btn">지우기</button>' +
@@ -429,9 +430,10 @@ def inject_floating_memo_window() -> None:
                 var rect = win.getBoundingClientRect();
                 dragOffsetX = e.clientX - rect.left;
                 dragOffsetY = e.clientY - rect.top;
-                titlebar.setPointerCapture(e.pointerId);
+                try { titlebar.setPointerCapture(e.pointerId); } catch (err) {}
+                e.preventDefault();
             });
-            titlebar.addEventListener("pointermove", function (e) {
+            doc.addEventListener("pointermove", function (e) {
                 if (!dragging) { return; }
                 var newLeft = e.clientX - dragOffsetX;
                 var newTop = e.clientY - dragOffsetY;
@@ -441,17 +443,18 @@ def inject_floating_memo_window() -> None:
                 win.style.top = newTop + "px";
             });
             function stopDrag() { if (dragging) { dragging = false; saveState(); } }
-            titlebar.addEventListener("pointerup", stopDrag);
-            titlebar.addEventListener("pointercancel", stopDrag);
+            doc.addEventListener("pointerup", stopDrag);
+            doc.addEventListener("pointercancel", stopDrag);
 
             var resizeHandle = doc.getElementById("memo-resize-handle");
             var resizing = false;
             resizeHandle.addEventListener("pointerdown", function (e) {
                 resizing = true;
-                resizeHandle.setPointerCapture(e.pointerId);
+                try { resizeHandle.setPointerCapture(e.pointerId); } catch (err) {}
                 e.stopPropagation();
+                e.preventDefault();
             });
-            resizeHandle.addEventListener("pointermove", function (e) {
+            doc.addEventListener("pointermove", function (e) {
                 if (!resizing) { return; }
                 var rect = win.getBoundingClientRect();
                 var newWidth = Math.max(240, e.clientX - rect.left);
@@ -461,8 +464,8 @@ def inject_floating_memo_window() -> None:
                 resizeCanvas();
             });
             function stopResize() { if (resizing) { resizing = false; saveState(); } }
-            resizeHandle.addEventListener("pointerup", stopResize);
-            resizeHandle.addEventListener("pointercancel", stopResize);
+            doc.addEventListener("pointerup", stopResize);
+            doc.addEventListener("pointercancel", stopResize);
 
             var canvas = doc.getElementById("memo-canvas");
             var ctx = canvas.getContext("2d");
@@ -510,13 +513,13 @@ def inject_floating_memo_window() -> None:
 
             canvas.addEventListener("pointerdown", function (e) {
                 if (penOnly && e.pointerType === "touch") { return; }
-                canvas.setPointerCapture(e.pointerId);
+                try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
                 var color = doc.getElementById("memo-color-input").value;
                 var width = parseFloat(doc.getElementById("memo-width-input").value);
                 currentStroke = { color: color, width: width, points: [getPos(e)] };
                 e.preventDefault();
             });
-            canvas.addEventListener("pointermove", function (e) {
+            doc.addEventListener("pointermove", function (e) {
                 if (!currentStroke) { return; }
                 currentStroke.points.push(getPos(e));
                 var n = currentStroke.points.length;
@@ -537,9 +540,8 @@ def inject_floating_memo_window() -> None:
                 if (currentStroke.points.length >= 2) { strokes.push(currentStroke); saveStrokes(); }
                 currentStroke = null;
             }
-            canvas.addEventListener("pointerup", endStroke);
-            canvas.addEventListener("pointercancel", endStroke);
-            canvas.addEventListener("pointerleave", endStroke);
+            doc.addEventListener("pointerup", endStroke);
+            doc.addEventListener("pointercancel", endStroke);
 
             doc.getElementById("memo-undo-btn").addEventListener("click", function () {
                 strokes.pop(); saveStrokes(); redraw();
@@ -1001,6 +1003,191 @@ def append_study_stat(user_id: str, part: str, total: int, correct: int) -> None
         pass
 
 
+# ---------------------------
+# 3-3. [신규] 한자 구성요소(부수) 공용 사전
+# ---------------------------
+# 단어마다 한자 풀이를 매번 새로 적으면, 같은 한자(예: 水, 日)가 여러 단어에 반복해서
+# 나올 때마다 설명이 중복된다. 이 사전은 "한 글자당 설명 1개"만 GitHub에 저장해두고,
+# 단어에 그 글자가 나올 때마다 자동으로 찾아서 보여주는 방식이다. 즉 단어 힌트에는
+# 그 단어만의 뜻/쓰임을 적고, 한자 풀이는 이 공용 사전에서 자동으로 가져와 붙인다.
+RADICAL_SEED_DATA = {
+    "水": {"reading": "물 수", "desc": "물이 흐르는 모양을 본뜬 글자. 강, 바다 등 물과 관련된 글자에 쓰인다."},
+    "木": {"reading": "나무 목", "desc": "나무의 모양을 본뜬 글자. 나무, 식물과 관련된 글자에 쓰인다."},
+    "人": {"reading": "사람 인", "desc": "사람이 서 있는 모습을 본뜬 글자."},
+    "心": {"reading": "마음 심", "desc": "심장의 모양을 본뜬 글자. 감정, 마음과 관련된 글자에 쓰인다."},
+    "手": {"reading": "손 수", "desc": "손의 모양을 본뜬 글자. 손으로 하는 동작과 관련된 글자에 쓰인다."},
+    "口": {"reading": "입 구", "desc": "입의 모양을 본뜬 글자. 말하기, 먹기와 관련된 글자에 쓰인다."},
+    "日": {"reading": "날 일", "desc": "해의 모양을 본뜬 글자. 시간, 날씨와 관련된 글자에 쓰인다."},
+    "月": {"reading": "달 월", "desc": "달의 모양을 본뜬 글자."},
+    "火": {"reading": "불 화", "desc": "불꽃 모양을 본뜬 글자. 불, 열과 관련된 글자에 쓰인다."},
+    "土": {"reading": "흙 토", "desc": "땅 위에 흙이 쌓인 모양을 본뜬 글자."},
+    "金": {"reading": "쇠 금", "desc": "쇳덩이 모양을 본뜬 글자. 금속과 관련된 글자에 쓰인다."},
+    "女": {"reading": "여자 여", "desc": "여자가 무릎을 꿇은 모습을 본뜬 글자."},
+    "子": {"reading": "아들 자", "desc": "포대기에 싸인 아이의 모습을 본뜬 글자."},
+    "大": {"reading": "큰 대", "desc": "사람이 팔다리를 벌린 모습을 본뜬 글자. '크다'는 뜻과 관련된다."},
+    "小": {"reading": "작을 소", "desc": "작은 점들이 흩어진 모양을 본뜬 글자."},
+    "山": {"reading": "뫼 산", "desc": "산봉우리 모양을 본뜬 글자."},
+    "川": {"reading": "내 천", "desc": "물이 흐르는 시내 모양을 본뜬 글자."},
+    "田": {"reading": "밭 전", "desc": "경계가 나뉜 밭의 모양을 본뜬 글자."},
+    "目": {"reading": "눈 목", "desc": "눈의 모양을 본뜬 글자. 보는 것과 관련된 글자에 쓰인다."},
+    "耳": {"reading": "귀 이", "desc": "귀의 모양을 본뜬 글자."},
+    "足": {"reading": "발 족", "desc": "발의 모양을 본뜬 글자. 걷기, 다리와 관련된 글자에 쓰인다."},
+    "言": {"reading": "말씀 언", "desc": "입에서 말이 나오는 모양을 본뜬 글자. 말, 언어와 관련된 글자에 쓰인다."},
+    "食": {"reading": "밥 식", "desc": "그릇에 담긴 음식 모양을 본뜬 글자. 먹는 것과 관련된 글자에 쓰인다."},
+    "糸": {"reading": "실 사", "desc": "실타래 모양을 본뜬 글자. 실, 옷감과 관련된 글자에 쓰인다."},
+    "刀": {"reading": "칼 도", "desc": "칼의 모양을 본뜬 글자. 자르는 동작과 관련된 글자에 쓰인다."},
+    "力": {"reading": "힘 력", "desc": "팔의 근육 모양을 본뜬 글자. 힘, 노동과 관련된 글자에 쓰인다."},
+    "犬": {"reading": "개 견", "desc": "개의 모양을 본뜬 글자."},
+    "牛": {"reading": "소 우", "desc": "소의 머리 모양을 본뜬 글자."},
+    "馬": {"reading": "말 마", "desc": "말의 모양을 본뜬 글자."},
+    "鳥": {"reading": "새 조", "desc": "새의 모양을 본뜬 글자."},
+    "魚": {"reading": "물고기 어", "desc": "물고기의 모양을 본뜬 글자."},
+    "雨": {"reading": "비 우", "desc": "하늘에서 비가 내리는 모양을 본뜬 글자. 날씨와 관련된 글자에 쓰인다."},
+    "竹": {"reading": "대 죽", "desc": "대나무 잎 모양을 본뜬 글자."},
+    "米": {"reading": "쌀 미", "desc": "낟알이 흩어진 모양을 본뜬 글자. 곡식과 관련된 글자에 쓰인다."},
+    "石": {"reading": "돌 석", "desc": "언덕 아래 돌의 모양을 본뜬 글자."},
+    "車": {"reading": "수레 거/차", "desc": "수레바퀴 모양을 본뜬 글자. 탈것과 관련된 글자에 쓰인다."},
+    "門": {"reading": "문 문", "desc": "두 짝 문의 모양을 본뜬 글자."},
+    "立": {"reading": "설 립", "desc": "사람이 땅 위에 서 있는 모습을 본뜬 글자."},
+    "白": {"reading": "흰 백", "desc": "빛나는 것의 모양을 본뜬 글자. '희다'는 뜻과 관련된다."},
+}
+
+
+def load_radical_library() -> dict:
+    """
+    공용 한자 사전을 GitHub에서 불러온다. 아직 파일이 없으면 빈 사전을 돌려준다.
+    (다른 GitHub 조회처럼 30분 캐시를 그대로 활용한다.)
+    """
+    status, data = github_get_contents(RADICAL_LIBRARY_FILE)
+    if status != 200:
+        return {}
+    try:
+        raw = base64.b64decode(data.get("content", "")).decode("utf-8")
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+def save_radical_library(library: dict) -> bool:
+    try:
+        text_content = json.dumps(library, ensure_ascii=False, indent=2, sort_keys=True)
+        folder, filename = RADICAL_LIBRARY_FILE.rsplit("/", 1)
+        resp, _ = upload_text_to_github(folder, filename, text_content)
+        return resp.status_code in (200, 201)
+    except Exception:
+        return False
+
+
+def get_char_breakdown(word: str) -> list:
+    """
+    단어에 들어있는 한자(CJK 통합 한자) 중, 공용 사전에 등록된 글자만 뽑아서
+    [(글자, {"reading":.., "desc":..}), ...] 형태로 돌려준다. 사전에 없는 글자는 그냥 건너뛴다.
+    """
+    library = load_radical_library()
+    if not library:
+        return []
+    seen = set()
+    result = []
+    for ch in word:
+        if ch in seen:
+            continue
+        if "\u4e00" <= ch <= "\u9fff" and ch in library:
+            seen.add(ch)
+            result.append((ch, library[ch]))
+    return result
+
+
+def render_char_breakdown(word: str) -> None:
+    """단어 카드 아래에, 공용 사전에 등록된 한자가 있을 때만 접이식으로 보여준다."""
+    breakdown = get_char_breakdown(word)
+    if not breakdown:
+        return
+    with st.expander("한자 풀이"):
+        for ch, info in breakdown:
+            reading = info.get("reading", "")
+            desc = info.get("desc", "")
+            st.markdown(f"**{ch}**" + (f" ({reading})" if reading else "") + (f" — {desc}" if desc else ""))
+
+
+def render_radical_library_part() -> None:
+    """한자 공용 사전을 보고, 새 글자를 추가/수정/삭제하는 관리 화면."""
+    st.header("한자 풀이 사전")
+    st.caption(
+        "여기 등록한 한자는, 그 글자가 들어있는 모든 단어의 학습/연습/시험 화면에 "
+        "'한자 풀이'로 자동으로 표시됩니다. 단어마다 같은 한자를 반복해서 설명할 필요가 없습니다."
+    )
+
+    library = load_radical_library()
+    correct_pw = str(st.secrets.get("upload_password", "")).strip()
+
+    st.write(f"현재 등록된 글자 수: {len(library)}개")
+
+    with st.expander("기본 한자 40여 개를 한 번에 불러오기 (이미 있는 글자는 건드리지 않음)"):
+        st.caption("자주 쓰이는 기본 한자(부수)를 미리 정리해둔 시작 세트입니다. 필요 없으면 넘어가도 됩니다.")
+        seed_pw = st.text_input("업로드 비밀번호", type="password", key="seed_radical_pw")
+        if st.button("기본 세트 추가하기", key="load_seed_radical_btn"):
+            if not hmac.compare_digest(seed_pw, correct_pw):
+                st.error("비밀번호가 올바르지 않습니다.")
+            else:
+                merged = dict(RADICAL_SEED_DATA)
+                merged.update(library)  # 기존에 사용자가 수정한 내용을 우선시함
+                if save_radical_library(merged):
+                    clear_github_cache()
+                    st.toast("기본 세트를 추가했습니다.")
+                    st.rerun()
+                else:
+                    st.error("저장에 실패했습니다.")
+
+    st.write("---")
+    st.subheader("새 글자 추가 / 수정")
+    with st.form("radical_add_form"):
+        char_input = st.text_input("한자 (한 글자)", max_chars=1)
+        reading_input = st.text_input("훈음 (예: 물 수)")
+        desc_input = st.text_area("설명", height=80)
+        pw_input = st.text_input("업로드 비밀번호", type="password")
+        submitted = st.form_submit_button("저장", use_container_width=True)
+
+    if submitted:
+        if not hmac.compare_digest(pw_input, correct_pw):
+            st.error("비밀번호가 올바르지 않습니다.")
+        elif not char_input.strip():
+            st.warning("한자를 입력해주세요.")
+        else:
+            library[char_input.strip()] = {"reading": reading_input.strip(), "desc": desc_input.strip()}
+            if save_radical_library(library):
+                clear_github_cache()
+                st.toast(f"'{char_input.strip()}' 저장했습니다.")
+                st.rerun()
+            else:
+                st.error("저장에 실패했습니다.")
+
+    st.write("---")
+    st.subheader(f"등록된 글자 목록 ({len(library)}개)")
+    if not library:
+        st.info("아직 등록된 글자가 없습니다.")
+        return
+
+    del_pw = st.text_input("삭제할 때 사용할 비밀번호", type="password", key="radical_delete_pw")
+    for ch in sorted(library.keys()):
+        info = library[ch]
+        with st.container(border=True):
+            c1, c2 = st.columns([5, 1])
+            with c1:
+                st.markdown(f"**{ch}** ({info.get('reading', '')}) — {info.get('desc', '')}")
+            with c2:
+                if st.button("삭제", key=f"radical_del_{ch}", use_container_width=True):
+                    if not hmac.compare_digest(del_pw, correct_pw):
+                        st.error("비밀번호가 올바르지 않습니다.")
+                    else:
+                        library.pop(ch, None)
+                        if save_radical_library(library):
+                            clear_github_cache()
+                            st.toast(f"'{ch}' 삭제했습니다.")
+                            st.rerun()
+                        else:
+                            st.error("삭제에 실패했습니다.")
+
+
 def render_user_id_gate() -> None:
     """
     사용자 고유 번호를 입력받는다. 번호를 입력하면 이후 학습/연습/시험/지문 진행 상황이
@@ -1303,7 +1490,7 @@ def render_sidebar() -> list:
 
         # [신규] 몇 개 파일을 골랐는지 즉시 보여줘서, 스크롤을 다시 올리지 않아도 알 수 있게 함
         if selected_labels:
-            st.success(f"✅ {len(selected_labels)}개 파일 선택됨")
+            st.success(f"{len(selected_labels)}개 파일 선택됨")
         else:
             st.caption("선택된 파일이 없습니다.")
 
@@ -1379,7 +1566,7 @@ def render_study_active() -> None:
         is_favorite = word_data["word"] in st.session_state.favorite_words
 
         with sticky_action_bar("study_sticky_bar"):
-            b1, b2, b3 = st.columns([2, 2, 1])
+            b1, b2, b3 = st.columns([2, 2, 2])
             with b1:
                 if st.button("다음 단어", use_container_width=True, key="study_next_btn"):
                     st.session_state.study_index += 1
@@ -1397,7 +1584,7 @@ def render_study_active() -> None:
                     st.rerun()
             with b3:
                 # [신규] 즐겨찾기 토글 - 헷갈리는 단어를 표시해두고 나중에 모아 볼 수 있음
-                star_label = "★" if is_favorite else "☆"
+                star_label = "즐겨찾기 해제" if is_favorite else "즐겨찾기"
                 if st.button(star_label, use_container_width=True, key="study_favorite_btn"):
                     if is_favorite:
                         st.session_state.favorite_words.remove(word_data["word"])
@@ -1405,7 +1592,7 @@ def render_study_active() -> None:
                         st.session_state.favorite_words.append(word_data["word"])
                     st.rerun()
 
-        fav_badge = " ⭐" if is_favorite else ""
+        fav_badge = " (즐겨찾기)" if is_favorite else ""
         st.markdown(f"""
             <div class="study-card qa-compact">
                 <div class="word-text">{word_data['word']}{fav_badge}</div>
@@ -1418,6 +1605,7 @@ def render_study_active() -> None:
                 f"<div class='hint-box'><b>힌트</b><br>{word_data['hint'].replace(chr(10), '<br>')}</div>",
                 unsafe_allow_html=True
             )
+        render_char_breakdown(word_data["word"])
 
         progress = (st.session_state.study_index) / max(1, len(st.session_state.words))
         st.progress(min(1.0, progress))
@@ -1428,7 +1616,7 @@ def render_study_active() -> None:
     else:
         st.success("모든 단어 학습을 완료했습니다.")
         if st.session_state.favorite_words:
-            st.info(f"⭐ 이번 세션에서 즐겨찾기한 단어 {len(st.session_state.favorite_words)}개가 있습니다. (연습/시험에서 다시 만날 수 있어요)")
+            st.info(f"이번 세션에서 즐겨찾기한 단어 {len(st.session_state.favorite_words)}개가 있습니다. (연습/시험에서 다시 만날 수 있어요)")
         if st.session_state.user_id:
             delete_user_progress(st.session_state.user_id, "study")
         if st.button("다시 처음부터", use_container_width=True):
@@ -1545,6 +1733,8 @@ def render_practice_active() -> None:
             card_html += f"<div class='hint-box'><b>힌트</b><br>{cw['hint'].replace(chr(10), '<br>')}</div>"
         card_html += "</div>"
         st.markdown(card_html, unsafe_allow_html=True)
+        if is_ans_shown:
+            render_char_breakdown(cw["word"])
 
         total = max(1, st.session_state.practice_total_count)
         st.progress(min(1.0, st.session_state.practice_done_count / total))
@@ -1703,6 +1893,8 @@ def render_exam_active() -> None:
                 card_html += f"<div class='hint-box'><b>힌트</b><br>{cw['hint'].replace(chr(10), '<br>')}</div>"
         card_html += "</div>"
         st.markdown(card_html, unsafe_allow_html=True)
+        if is_ans_shown:
+            render_char_breakdown(cw["word"])
 
         total = max(1, st.session_state.exam_total_count)
         st.progress(min(1.0, (st.session_state.exam_current_number - 1) / total))
@@ -1712,8 +1904,7 @@ def render_exam_active() -> None:
 
         # [신규] 정답률에 따라 다른 톤으로 결과를 보여줘서 한눈에 체감되도록 함 (UX 개선)
         if accuracy >= 90:
-            st.balloons()
-            st.success(f"🎉 시험 종료! {st.session_state.exam_correct_count} / {st.session_state.exam_total_count} (정답률 {accuracy}%) — 훌륭합니다!")
+            st.success(f"시험 종료. {st.session_state.exam_correct_count} / {st.session_state.exam_total_count} (정답률 {accuracy}%) — 훌륭합니다.")
         elif accuracy >= 70:
             st.info(f"시험 종료. {st.session_state.exam_correct_count} / {st.session_state.exam_total_count} (정답률 {accuracy}%) — 조금만 더!")
         else:
@@ -1822,11 +2013,11 @@ def render_wordbook_part() -> None:
                 resp, path = upload_text_to_github(target_folder, safe_name, manual_text)
                 if resp.status_code in (200, 201):
                     clear_github_cache()
-                    st.toast(f"업로드 완료: {path}", icon="✅")
+                    st.toast(f"업로드 완료: {path}")
                     st.success(f"업로드 완료: {path} ({len(parsed)}개 단어)")
                     st.rerun()
                 else:
-                    st.toast("업로드 실패", icon="⚠️")
+                    st.toast("업로드 실패")
                     st.error(f"업로드 실패 (status {resp.status_code}, 경로: {path}): {resp.text[:200]}")
 
     with tab2:
@@ -1853,11 +2044,11 @@ def render_wordbook_part() -> None:
                     resp, path = upload_text_to_github(target_folder, safe_name, up_text)
                     if resp.status_code in (200, 201):
                         clear_github_cache()
-                        st.toast(f"업로드 완료: {path}", icon="✅")
+                        st.toast(f"업로드 완료: {path}")
                         st.success(f"업로드 완료: {path} ({len(parsed)}개 단어)")
                         st.rerun()
                     else:
-                        st.toast("업로드 실패", icon="⚠️")
+                        st.toast("업로드 실패")
                         st.error(f"업로드 실패 (status {resp.status_code}, 경로: {path}): {resp.text[:200]}")
 
 
@@ -1989,7 +2180,7 @@ def render_wrongnote_part() -> None:
     with top2:
         if st.button("오답 노트 전체 비우기", use_container_width=True, key="wrongnote_clear_btn"):
             save_wrong_notes(st.session_state.user_id, [])
-            st.toast("오답 노트를 비웠습니다.", icon="🧹")
+            st.toast("오답 노트를 비웠습니다.")
             st.rerun()
 
     st.write("---")
@@ -2004,7 +2195,7 @@ def render_wrongnote_part() -> None:
             with c2:
                 if st.button("암기완료", key=f"wrongnote_done_{idx}", use_container_width=True):
                     remove_word_from_wrong_notes(st.session_state.user_id, w)
-                    st.toast("오답 노트에서 제거했습니다.", icon="✅")
+                    st.toast("오답 노트에서 제거했습니다.")
                     st.rerun()
 
 
@@ -2108,7 +2299,7 @@ def main() -> None:
 
         page = st.radio(
             "파트 이동",
-            ["학습", "연습", "시험", "오답 노트", "학습 통계", "단어장 추가", "지문 외우기"],
+            ["학습", "연습", "시험", "오답 노트", "학습 통계", "단어장 추가", "지문 외우기", "한자 풀이 사전"],
             horizontal=True,
             label_visibility="collapsed",
             key="current_page_select"
@@ -2128,6 +2319,8 @@ def main() -> None:
             render_wordbook_part()
         elif page == "지문 외우기":
             render_script_setup()
+        elif page == "한자 풀이 사전":
+            render_radical_library_part()
 
     inject_keyboard_shortcuts()
     inject_session_keepalive()
