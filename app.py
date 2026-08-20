@@ -78,6 +78,10 @@ def init_session_state() -> None:
 
         # [신규] 상단 라디오 대신 쓸 페이지 네비게이션에서, "통계" 탭 캐시
         "stats_summary_cache": None,
+
+        # [신규] 지금 보고 있는 단어 목록이 '부수만 모아서 학습/연습'으로 시작한 것인지 여부.
+        # 이 경우 카드 자체가 이미 부수 설명이므로 아래에 '한자 풀이'를 중복으로 보여주지 않는다.
+        "words_are_radicals": False,
     }
 
     for key, value in defaults.items():
@@ -882,6 +886,7 @@ def save_practice_progress() -> None:
         "display_side": st.session_state.practice_display_side,
         "total_count": st.session_state.practice_total_count,
         "done_count": st.session_state.practice_done_count,
+        "words_are_radicals": st.session_state.words_are_radicals,
     })
 
 
@@ -1553,6 +1558,35 @@ def build_word_pool(selected_files: list) -> list:
     return pool
 
 
+def build_radical_word_list(selected_files: list) -> list:
+    """
+    선택한 파일들의 단어에 들어있는 한자 중, 한자 풀이 사전에 등록된 글자만 뽑아
+    중복 없이 '단어'처럼 만든다 (word=한자, meaning=훈음, hint=설명).
+
+    같은 부수가 여러 단어에 걸쳐 반복해서 나올 때, 단어 하나하나를 다시 훑는 대신
+    그 부수 자체를 한 번씩만 학습/연습 대상으로 묶어서 효율적으로 외울 수 있게 하기 위함이다.
+    """
+    words = build_word_pool(selected_files)
+    library = load_radical_library()
+    if not library:
+        return []
+    seen = set()
+    result = []
+    for w in words:
+        for ch in w["word"]:
+            if ch in seen:
+                continue
+            if "\u4e00" <= ch <= "\u9fff" and ch in library:
+                seen.add(ch)
+                info = library[ch]
+                result.append({
+                    "word": ch,
+                    "meaning": info.get("reading", ""),
+                    "hint": info.get("desc", ""),
+                })
+    return result
+
+
 def get_session_rng() -> random.Random:
     """사용자(세션)별로 독립된 난수 생성기를 반환한다."""
     if "session_rng" not in st.session_state:
@@ -1762,6 +1796,25 @@ def load_data(selected_files: list, is_script: bool = False) -> bool:
     return True
 
 
+def get_radical_words_or_warn(selected_files: list):
+    """
+    '부수만 모아서 학습/연습'을 시작하기 전에 파일 선택 여부와 결과를 확인한다.
+    문제가 있으면 화면에 경고를 띄우고 None을 돌려준다.
+    """
+    if not selected_files:
+        st.warning("사이드바에서 파일을 선택해주세요.")
+        return None
+    radical_words = build_radical_word_list(selected_files)
+    if not radical_words:
+        st.warning(
+            "선택한 파일의 단어에서 '한자 풀이 사전'에 등록된 한자를 찾지 못했습니다. "
+            "'한자 풀이 사전' 메뉴에서 부수를 먼저 등록해주세요."
+        )
+        return None
+    get_session_rng().shuffle(radical_words)
+    return radical_words
+
+
 # ---------------------------
 # 6. 학습 파트
 # ---------------------------
@@ -1782,23 +1835,48 @@ def render_study_setup() -> None:
                 st.session_state.current_files_label = saved.get("files_label", [])
                 st.session_state.study_index = saved.get("study_index", 0)
                 st.session_state.study_show_hint = False
+                st.session_state.words_are_radicals = saved.get("words_are_radicals", False)
                 st.session_state.is_studying = True
                 st.session_state.active_part = "study"
                 st.rerun()
 
-    if st.button("학습 시작", use_container_width=True):
-        if load_data(selected_files):
-            st.session_state.is_studying = True
-            st.session_state.active_part = "study"
-            st.session_state.study_index = 0
-            st.session_state.study_show_hint = False
-            if st.session_state.user_id:
-                save_user_progress(st.session_state.user_id, "study", {
-                    "words": st.session_state.words,
-                    "files_label": st.session_state.current_files_label,
-                    "study_index": 0,
-                })
-            st.rerun()
+    with mobile_stack_container("study_start_btns"):
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("학습 시작", use_container_width=True, key="study_start_btn"):
+                if load_data(selected_files):
+                    st.session_state.is_studying = True
+                    st.session_state.active_part = "study"
+                    st.session_state.study_index = 0
+                    st.session_state.study_show_hint = False
+                    st.session_state.words_are_radicals = False
+                    if st.session_state.user_id:
+                        save_user_progress(st.session_state.user_id, "study", {
+                            "words": st.session_state.words,
+                            "files_label": st.session_state.current_files_label,
+                            "study_index": 0,
+                            "words_are_radicals": False,
+                        })
+                    st.rerun()
+        with c2:
+            if st.button("부수만 모아서 학습", use_container_width=True, key="study_radical_btn"):
+                radical_words = get_radical_words_or_warn(selected_files)
+                if radical_words:
+                    st.session_state.words = radical_words
+                    st.session_state.current_files_label = [f"{f['label']} (부수만)" for f in selected_files]
+                    st.session_state.is_studying = True
+                    st.session_state.active_part = "study"
+                    st.session_state.study_index = 0
+                    st.session_state.study_show_hint = False
+                    st.session_state.words_are_radicals = True
+                    if st.session_state.user_id:
+                        save_user_progress(st.session_state.user_id, "study", {
+                            "words": st.session_state.words,
+                            "files_label": st.session_state.current_files_label,
+                            "study_index": 0,
+                            "words_are_radicals": True,
+                        })
+                    st.rerun()
 
 
 def render_study_active() -> None:
@@ -1820,6 +1898,7 @@ def render_study_active() -> None:
                             "words": st.session_state.words,
                             "files_label": st.session_state.current_files_label,
                             "study_index": st.session_state.study_index,
+                            "words_are_radicals": st.session_state.words_are_radicals,
                         })
                     st.rerun()
             with b2:
@@ -1849,7 +1928,8 @@ def render_study_active() -> None:
                 f"<div class='hint-box'><b>힌트</b><br>{word_data['hint'].replace(chr(10), '<br>')}</div>",
                 unsafe_allow_html=True
             )
-        render_char_breakdown(word_data["word"])
+        if not st.session_state.words_are_radicals:
+            render_char_breakdown(word_data["word"])
 
         progress = (st.session_state.study_index) / max(1, len(st.session_state.words))
         st.progress(min(1.0, progress))
@@ -1874,6 +1954,30 @@ def render_study_active() -> None:
 # ---------------------------
 # 7. 연습 파트
 # ---------------------------
+def start_practice_session(words: list, mode: str, files_label: list, is_radical: bool) -> None:
+    """연습 큐를 새로 채우고 세션 상태를 초기화한다. (일반 연습 / 부수만 모아서 연습 공용)"""
+    st.session_state.words = words
+    st.session_state.current_files_label = files_label
+    st.session_state.practice_queue = list(words)
+    st.session_state.practice_total_count = len(st.session_state.practice_queue)
+    st.session_state.practice_done_count = 0
+    st.session_state.is_practicing = True
+    st.session_state.active_part = "practice"
+    st.session_state.practice_mode = mode
+    st.session_state.practice_show_answer = False
+    st.session_state.practice_show_hint = False
+    st.session_state.practice_result_saved = False
+    st.session_state.words_are_radicals = is_radical
+
+    if st.session_state.practice_queue:
+        st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
+        st.session_state.practice_display_side = get_display_side(mode)
+    else:
+        st.session_state.current_practice_word = None
+
+    save_practice_progress()
+
+
 def render_practice_setup() -> None:
     st.header("연습 파트 (망각 곡선 적용)")
     st.caption("단축키 : (대문자는 capslock시 편함) 스페이스바 = 정답(힌트도 함께 표시), H = 힌트, Z=100 X=60 C=40 V=0")
@@ -1897,6 +2001,7 @@ def render_practice_setup() -> None:
                 st.session_state.practice_show_answer = False
                 st.session_state.practice_show_hint = False
                 st.session_state.practice_result_saved = False
+                st.session_state.words_are_radicals = saved.get("words_are_radicals", False)
                 st.session_state.is_practicing = True
                 st.session_state.active_part = "practice"
                 st.rerun()
@@ -1909,22 +2014,18 @@ def render_practice_setup() -> None:
         if c3.button("랜덤 연습", use_container_width=True): mode = "random"
 
     if mode and load_data(selected_files):
-        st.session_state.practice_queue = list(st.session_state.words)
-        st.session_state.practice_total_count = len(st.session_state.practice_queue)
-        st.session_state.practice_done_count = 0
-        st.session_state.is_practicing = True
-        st.session_state.active_part = "practice"
-        st.session_state.practice_mode = mode
-        st.session_state.practice_show_answer = False
-        st.session_state.practice_show_hint = False
-        st.session_state.practice_result_saved = False
-
-        if st.session_state.practice_queue:
-            st.session_state.current_practice_word = st.session_state.practice_queue.pop(0)
-            st.session_state.practice_display_side = get_display_side(mode)
-
-        save_practice_progress()
+        start_practice_session(st.session_state.words, mode, st.session_state.current_files_label, is_radical=False)
         st.rerun()
+
+    st.write("---")
+    st.caption("같은 부수가 여러 단어에 반복해서 나올 때, 부수만 따로 모아서 집중적으로 외우고 싶다면:")
+    with mobile_stack_container("practice_radical_btns"):
+        if st.button("부수만 모아서 연습 (랜덤)", use_container_width=True, key="practice_radical_btn"):
+            radical_words = get_radical_words_or_warn(selected_files)
+            if radical_words:
+                files_label = [f"{f['label']} (부수만)" for f in selected_files]
+                start_practice_session(radical_words, "random", files_label, is_radical=True)
+                st.rerun()
 
 
 def render_practice_active() -> None:
@@ -1980,7 +2081,7 @@ def render_practice_active() -> None:
             card_html += f"<div class='hint-box'><b>힌트</b><br>{cw['hint'].replace(chr(10), '<br>')}</div>"
         card_html += "</div>"
         st.markdown(card_html, unsafe_allow_html=True)
-        if is_ans_shown:
+        if is_ans_shown and not st.session_state.words_are_radicals:
             render_char_breakdown(cw["word"])
 
         total = max(1, st.session_state.practice_total_count)
@@ -2079,6 +2180,7 @@ def render_exam_setup() -> None:
             st.session_state.exam_show_answer = False
             st.session_state.exam_wrong_words = []  # [신규] 새 시험 시작 시 오답 목록 초기화
             st.session_state.exam_result_saved = False
+            st.session_state.words_are_radicals = False  # 시험은 부수 전용 모드가 없으므로 항상 초기화
 
             exam_words = list(st.session_state.words)
             actual_count = min(st.session_state.exam_total_count_input, len(exam_words))
