@@ -77,8 +77,6 @@ def init_session_state() -> None:
 
         # [신규] 상단 라디오 대신 쓸 페이지 네비게이션에서, "통계" 탭 캐시
         "stats_summary_cache": None,
-
-        "show_pencil_memo": True,  # [신규] 애플펜슬 메모장 표시 여부
     }
 
     for key, value in defaults.items():
@@ -142,11 +140,6 @@ def apply_global_style() -> None:
         div[data-testid="stToolbar"] { display: none !important; }
         div[data-testid="stDecoration"] { display: none !important; }
         .block-container { padding-top: 0.4rem !important; }
-
-        /* ---------- [신규] 애플펜슬 메모장을 위한 좌우 여백 확보 (넓은 화면 전용) ---------- */
-        @media (min-width: 1000px) {
-            .block-container { max-width: 560px !important; }
-        }
     """ if focus_on else ""
 
     st.markdown(f"""
@@ -291,22 +284,6 @@ def apply_global_style() -> None:
         @media (min-width: 1400px) {{
             .block-container {{ max-width: 820px; }}
         }}
-
-        /* ---------- [신규] 애플펜슬 메모장 도크: 넓은 화면(아이패드 가로형 등)에서만 좌우에 노출 ---------- */
-        .pencil-memo-dock {{
-            position: fixed;
-            top: 64px;
-            bottom: 14px;
-            width: clamp(150px, 15vw, 220px);
-            z-index: 400;
-            display: none;
-        }}
-        @media (min-width: 1000px) {{
-            .pencil-memo-dock {{ display: block; }}
-        }}
-        .pencil-memo-dock.pencil-left {{ left: 10px; }}
-        .pencil-memo-dock.pencil-right {{ right: 10px; }}
-        .pencil-memo-dock iframe {{ height: 100% !important; width: 100% !important; border: none !important; }}
         </style>
     """, unsafe_allow_html=True)
 
@@ -322,194 +299,6 @@ def sticky_action_bar(key: str):
     box = st.container(key=key)
     st.markdown('</div>', unsafe_allow_html=True)
     return box
-
-
-# ---------------------------
-# 2-1. [신규] 애플펜슬 메모장 (좌/우 도크)
-# ---------------------------
-def build_pencil_memo_html(storage_key: str, title: str) -> str:
-    """
-    Pointer Events API를 사용하는 필기 캔버스 HTML/JS를 만든다.
-    - 애플펜슬(pointerType='pen'), 손가락(touch), 마우스 입력을 모두 받는다.
-    - "펜만" 체크 시 손가락(touch) 입력은 무시해 손바닥이 닿아도 낙서가 되지 않는다.
-    - 그림은 stroke(선) 단위로 브라우저 localStorage에 저장되어, 다음 단어로 넘어가며
-      화면이 다시 그려져도(=페이지가 rerun 되어도) 내용이 유지된다.
-    - "되돌리기"는 마지막 한 획만 지운다. "지우기"는 전체를 비운다.
-    - "저장"은 현재 메모를 PNG 이미지로 다운로드한다.
-    """
-    template = """
-<div style="display:flex;flex-direction:column;height:100%;font-family:-apple-system,BlinkMacSystemFont,sans-serif;box-sizing:border-box;padding:2px;">
-  <div style="font-size:12px;font-weight:700;color:#9db2ff;margin-bottom:4px;">__TITLE__</div>
-  <div style="display:flex;gap:4px;margin-bottom:4px;">
-    <button id="undo_btn" style="flex:1;font-size:11px;padding:5px 2px;border-radius:6px;border:1px solid #444;background:#2a2a33;color:#eee;">되돌리기</button>
-    <button id="clear_btn" style="flex:1;font-size:11px;padding:5px 2px;border-radius:6px;border:1px solid #444;background:#2a2a33;color:#eee;">지우기</button>
-    <button id="save_btn" style="flex:1;font-size:11px;padding:5px 2px;border-radius:6px;border:1px solid #444;background:#2a2a33;color:#eee;">저장</button>
-  </div>
-  <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">
-    <input type="color" id="color_input" value="#8aa6ff" style="width:26px;height:26px;padding:0;border:none;background:none;">
-    <input type="range" id="width_input" min="1" max="12" value="2" style="flex:1;">
-    <label style="font-size:10px;color:#aaa;display:flex;align-items:center;gap:2px;white-space:nowrap;">
-      <input type="checkbox" id="pen_only_input" style="margin:0;">펜만
-    </label>
-  </div>
-  <canvas id="memo_canvas" style="flex:1;width:100%;min-height:120px;border-radius:10px;border:1px solid #38383f;background:#1a1a20;touch-action:none;cursor:crosshair;"></canvas>
-</div>
-<script>
-(function () {
-    var canvas = document.getElementById("memo_canvas");
-    var ctx = canvas.getContext("2d");
-    var storageKey = "pencil_memo_v1___STORAGE_KEY__";
-    var strokes = [];
-    var currentStroke = null;
-    var penOnly = false;
-
-    function loadStrokes() {
-        try {
-            var raw = window.localStorage.getItem(storageKey);
-            strokes = raw ? JSON.parse(raw) : [];
-        } catch (e) {
-            strokes = [];
-        }
-    }
-
-    function saveStrokes() {
-        try {
-            window.localStorage.setItem(storageKey, JSON.stringify(strokes));
-        } catch (e) {}
-    }
-
-    function redraw() {
-        var rect = canvas.getBoundingClientRect();
-        ctx.clearRect(0, 0, rect.width, rect.height);
-        for (var i = 0; i < strokes.length; i++) {
-            drawStroke(strokes[i]);
-        }
-    }
-
-    function drawStroke(s) {
-        if (!s.points || s.points.length < 2) return;
-        ctx.beginPath();
-        ctx.strokeStyle = s.color;
-        ctx.lineWidth = s.width;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-        ctx.moveTo(s.points[0].x, s.points[0].y);
-        for (var i = 1; i < s.points.length; i++) {
-            ctx.lineTo(s.points[i].x, s.points[i].y);
-        }
-        ctx.stroke();
-    }
-
-    function resizeCanvas() {
-        var rect = canvas.getBoundingClientRect();
-        var dpr = window.devicePixelRatio || 1;
-        canvas.width = Math.max(1, Math.round(rect.width * dpr));
-        canvas.height = Math.max(1, Math.round(rect.height * dpr));
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        redraw();
-    }
-
-    function getPos(e) {
-        var rect = canvas.getBoundingClientRect();
-        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    }
-
-    canvas.addEventListener("pointerdown", function (e) {
-        if (penOnly && e.pointerType === "touch") return;
-        canvas.setPointerCapture(e.pointerId);
-        var color = document.getElementById("color_input").value;
-        var width = parseFloat(document.getElementById("width_input").value);
-        currentStroke = { color: color, width: width, points: [getPos(e)] };
-        e.preventDefault();
-    });
-
-    canvas.addEventListener("pointermove", function (e) {
-        if (!currentStroke) return;
-        currentStroke.points.push(getPos(e));
-        var n = currentStroke.points.length;
-        if (n >= 2) {
-            ctx.beginPath();
-            ctx.strokeStyle = currentStroke.color;
-            ctx.lineWidth = currentStroke.width;
-            ctx.lineCap = "round";
-            ctx.lineJoin = "round";
-            ctx.moveTo(currentStroke.points[n - 2].x, currentStroke.points[n - 2].y);
-            ctx.lineTo(currentStroke.points[n - 1].x, currentStroke.points[n - 1].y);
-            ctx.stroke();
-        }
-        e.preventDefault();
-    });
-
-    function endStroke() {
-        if (!currentStroke) return;
-        if (currentStroke.points.length >= 2) {
-            strokes.push(currentStroke);
-            saveStrokes();
-        }
-        currentStroke = null;
-    }
-
-    canvas.addEventListener("pointerup", endStroke);
-    canvas.addEventListener("pointercancel", endStroke);
-    canvas.addEventListener("pointerleave", endStroke);
-
-    document.getElementById("undo_btn").addEventListener("click", function () {
-        strokes.pop();
-        saveStrokes();
-        redraw();
-    });
-
-    document.getElementById("clear_btn").addEventListener("click", function () {
-        strokes = [];
-        saveStrokes();
-        redraw();
-    });
-
-    document.getElementById("pen_only_input").addEventListener("change", function (e) {
-        penOnly = e.target.checked;
-    });
-
-    document.getElementById("save_btn").addEventListener("click", function () {
-        var exportCanvas = document.createElement("canvas");
-        exportCanvas.width = canvas.width;
-        exportCanvas.height = canvas.height;
-        var exportCtx = exportCanvas.getContext("2d");
-        exportCtx.fillStyle = "#1a1a20";
-        exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-        exportCtx.drawImage(canvas, 0, 0);
-        var link = document.createElement("a");
-        link.download = "___STORAGE_KEY___memo.png";
-        link.href = exportCanvas.toDataURL("image/png");
-        link.click();
-    });
-
-    window.addEventListener("resize", resizeCanvas);
-    loadStrokes();
-    setTimeout(resizeCanvas, 60);
-})();
-</script>
-"""
-    html = template.replace("__TITLE__", title)
-    html = html.replace("__STORAGE_KEY__", storage_key)
-    return html
-
-
-def render_pencil_memo_dock(position: str, storage_key: str, title: str) -> None:
-    """
-    화면이 넓을 때(대략 아이패드 가로형 이상)만 좌/우 여백에 애플펜슬 메모장을 띄운다.
-    화면이 좁으면 CSS(.pencil-memo-dock)가 자동으로 숨긴다.
-    """
-    if not st.session_state.get("show_pencil_memo", True):
-        return
-    st.markdown(f'<div class="pencil-memo-dock pencil-{position}">', unsafe_allow_html=True)
-    components.html(build_pencil_memo_html(storage_key, title), height=520, scrolling=False)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-
-def render_pencil_memo_docks(part_key: str) -> None:
-    """현재 파트(학습/연습/시험/지문) 전용 메모 2칸(좌/우)을 그린다."""
-    render_pencil_memo_dock("left", f"{part_key}_1", "메모 1")
-    render_pencil_memo_dock("right", f"{part_key}_2", "메모 2")
 
 
 def inject_session_keepalive() -> None:
@@ -1150,16 +939,6 @@ def render_sidebar() -> list:
             if col3.button("초기화", use_container_width=True):
                 st.session_state.font_scale = 1.0; st.rerun()
 
-            st.write("---")
-            new_show_memo = st.checkbox(
-                "✏️ 애플펜슬 메모장 표시 (넓은 화면에서만 보임)",
-                value=st.session_state.show_pencil_memo,
-                key="show_pencil_memo_checkbox",
-            )
-            if new_show_memo != st.session_state.show_pencil_memo:
-                st.session_state.show_pencil_memo = new_show_memo
-                st.rerun()
-
         render_user_id_gate()
 
         st.write("---")
@@ -1322,8 +1101,6 @@ def render_study_setup() -> None:
 
 def render_study_active() -> None:
     """진행 중에는 조작 버튼을 화면 맨 위 고정바에 배치하고, 그 아래에 카드를 보여준다."""
-    render_pencil_memo_docks("study")
-
     if st.session_state.study_index < len(st.session_state.words):
         word_data = st.session_state.words[st.session_state.study_index]
         has_hint = bool(word_data["hint"].strip())
@@ -1448,8 +1225,6 @@ def render_practice_setup() -> None:
 
 
 def render_practice_active() -> None:
-    render_pencil_memo_docks("practice")
-
     if st.session_state.current_practice_word:
         cw = st.session_state.current_practice_word
         has_hint = bool(cw["hint"].strip())
@@ -1612,8 +1387,6 @@ def render_exam_setup() -> None:
 
 
 def render_exam_active() -> None:
-    render_pencil_memo_docks("exam")
-
     if st.session_state.current_exam_word:
         cw = st.session_state.current_exam_word
         has_hint = bool(cw.get("hint", "").strip())
@@ -1855,8 +1628,6 @@ def render_script_setup() -> None:
 
 
 def render_script_active() -> None:
-    render_pencil_memo_docks("script")
-
     if st.session_state.script_index < len(st.session_state.script_lines):
         line_text = st.session_state.script_lines[st.session_state.script_index]
 
