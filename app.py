@@ -416,7 +416,6 @@ def inject_floating_memo_window() -> None:
 
             toggleBtn.addEventListener("click", function () {
                 win.style.display = (win.style.display === "none") ? "flex" : "none";
-                if (win.style.display === "flex") { setTimeout(resizeCanvas, 30); }
                 saveState();
             });
             doc.getElementById("memo-close-btn").addEventListener("click", function () {
@@ -578,9 +577,18 @@ def inject_floating_memo_window() -> None:
                 link.click();
             });
 
-            win_.addEventListener("resize", resizeCanvas);
             loadStrokes();
-            if (win.style.display !== "none") { setTimeout(resizeCanvas, 60); }
+            // setTimeout으로 "이쯤이면 크기가 잡혔겠지"하고 추측하는 대신,
+            // 창 크기가 실제로 바뀌는 바로 그 순간(열릴 때 포함) 브라우저가 즉시 알려주는
+            // ResizeObserver를 쓴다. 창을 열자마자 바로 그리기 시작해도, 캔버스 해상도가
+            // 아직 안 맞은 상태에서 그려진 획이 리사이즈 타이밍에 사라지는 문제가 없어진다.
+            if (typeof win_.ResizeObserver !== "undefined") {
+                var canvasResizeObserver = new win_.ResizeObserver(function () { resizeCanvas(); });
+                canvasResizeObserver.observe(win);
+            } else {
+                win_.addEventListener("resize", resizeCanvas);
+                resizeCanvas();
+            }
         })();
         </script>
     """, height=0, width=0)
@@ -1309,10 +1317,14 @@ def render_radical_library_part() -> None:
 
     st.write(f"현재 등록된 글자 수: {len(library)}개")
 
-    with st.expander("강희자전 부수 214개를 한 번에 불러오기 (이미 있는 글자는 건드리지 않음)"):
-        st.caption("나무위키 부수 문서를 참고해 정리한 강희자전 214개 부수 전체입니다. 필요 없으면 넘어가도 됩니다.")
+    st.subheader("1. 214개 한 번에 불러오기")
+    with st.expander("강희자전 부수 214개 한 번에 불러오기 (이미 있는 글자는 건드리지 않음)", expanded=True):
+        st.caption(
+            "나무위키 부수 문서를 참고해 정리한 강희자전 214개 부수 전체를 한 번에 채워 넣습니다. "
+            "**아래 비밀번호 칸만 채우면 되고, 한자를 따로 입력하실 필요는 없습니다.**"
+        )
         seed_pw = st.text_input("업로드 비밀번호", type="password", key="seed_radical_pw")
-        if st.button("기본 세트 추가하기", key="load_seed_radical_btn"):
+        if st.button("기본 세트 추가하기 (비밀번호만 입력)", use_container_width=True, key="load_seed_radical_btn"):
             if not hmac.compare_digest(seed_pw, correct_pw):
                 st.error("비밀번호가 올바르지 않습니다.")
             else:
@@ -1326,7 +1338,8 @@ def render_radical_library_part() -> None:
                     st.error("저장에 실패했습니다.")
 
     st.write("---")
-    st.subheader("새 글자 추가 / 수정")
+    st.subheader("2. 글자 하나씩 직접 추가 / 수정 (선택사항)")
+    st.caption("위 1번과 별개 기능입니다. 214개 세트에 없는 한자를 직접 추가하고 싶을 때만 사용하세요.")
     with st.form("radical_add_form"):
         char_input = st.text_input("한자 (한 글자)", max_chars=1)
         reading_input = st.text_input("훈음 (예: 물 수)")
