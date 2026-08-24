@@ -289,6 +289,11 @@ Supabaseへの即時保存によって、90秒ごとのkeep-alive ピングの�
 | `favorites` | お気に入り(星印)単語 |
 | `match_scores` | マッチングゲームのファイル組み合わせ別最速タイム |
 
+単語をすばやく連続でめくると、保存リクエストが送信順とは違う順番でサーバーから
+返ってくることがあり、遅れて届いた「古い」応答が直前の「最新」進捗を上書きしてしまう
+不具合がありました。`progress`・`wrong_notes`テーブルへの書き込みは(ユーザー, パート)
+ごとにキューで直列化し、常に呼び出した順番どおりに反映されるようにしています。
+
 ---
 
 ### 単語帳ファイルフォーマット
@@ -362,6 +367,9 @@ Supabaseへの即時保存によって、90秒ごとのkeep-alive ピングの�
 | JLPT D-dayカウントダウン | ホーム画面で試験日までの残り日数をすぐ確認できます |
 | 全画面共通のページヘッダー(色付きバッジ + タイトル) | 画面ごとにバラバラだった見出しを統一し、パートを一目で識別できるようにします |
 | タブ切り替え時のフェードイン遷移 | 画面が急に切り替わるのではなく、自然につながる感覚を出します |
+| 採点直後の画面フラッシュ | 正解/不正解のたびに画面全体を緑/赤で一瞬照らし、Duolingoのような即座のフィードバックを与えます |
+| 完了画面の紙吹雪演出 | 学習・練習・試験・マッチングゲームを終えるたびに紙吹雪が飛び散り、達成感を強調します |
+| 連続学習日バッジの炎アイコン | 常にゆらゆら揺れるアニメーションで、ホーム画面のストリーク表示を目立たせます |
 
 ---
 
@@ -380,7 +388,7 @@ src/
       wordlist/words/            # 選択したファイルの単語プールをパース (POST)
       wordlist/script/           # 文章暗記用の行単位パース
       wordbook/                  # 単語帳追加 (GitHubコミット、パスワード検証)
-  components/                    # FileSelector, FlashCard(3Dフリップ), Mascot, SessionInfoPanel, UsageGuide, PageHeader, PageTransition など
+  components/                    # FileSelector, FlashCard(3Dフリップ), Mascot, SessionInfoPanel, UsageGuide, PageHeader, PageTransition, Confetti, FeedbackFlash, StreakFlame など
   contexts/                      # ThemeContext(ダークモード), FocusModeContext(集中モード)
   lib/                           # parser, queue(忘却曲線), mastery(習熟度), learningLog(ダッシュボード), streak(連続学習日), favorites(お気に入り), matchScores(マッチングゲーム記録), github(サーバー専用), supabase
   hooks/useUserId.ts             # localStorage + URLクエリ(?uid=)ベースの「マイ番号」
@@ -705,6 +713,11 @@ Supabase에 즉시 저장하는 방식으로 바뀌면서 90초마다 신호를 
 | `favorites` | 즐겨찾기(별표) 단어 |
 | `match_scores` | 매칭 게임의 파일 조합별 최고 기록 |
 
+단어를 빠르게 연달아 넘기면 저장 요청이 보낸 순서와 다르게 서버에서 응답이 와서,
+늦게 도착한 "오래된" 응답이 방금 저장된 "최신" 진행 상황을 덮어써버리는 버그가
+있었습니다. `progress`·`wrong_notes` 테이블에 쓰는 작업은 (사용자, 파트)별로
+큐에 줄 세워 항상 호출한 순서대로 반영되도록 고쳤습니다.
+
 ---
 
 ### 단어장 파일 포맷
@@ -778,6 +791,9 @@ Supabase에 즉시 저장하는 방식으로 바뀌면서 90초마다 신호를 
 | JLPT D-day 카운트다운 | 홈 화면에서 시험일까지 남은 날짜를 바로 확인합니다 |
 | 전 화면 공통 페이지 헤더 (색 배지 + 제목) | 화면마다 제각각이던 제목 영역을 통일해 지금 어떤 파트인지 한눈에 알 수 있게 합니다 |
 | 탭 전환 시 페이드인 전환 효과 | 화면이 뚝뚝 끊기지 않고 자연스럽게 이어지는 느낌을 줍니다 |
+| 채점 직후 화면 플래시 | 정답/오답마다 화면 전체를 초록/빨강으로 잠깐 비춰, Duolingo처럼 즉각적인 피드백을 줍니다 |
+| 완료 화면 색종이(컨페티) 연출 | 학습·연습·시험·매칭 게임을 끝낼 때마다 색종이가 터지며 성취감을 강조합니다 |
+| 연속 학습일 배지의 불꽃 아이콘 | 계속 일렁이는 애니메이션으로 홈 화면의 스트릭 표시를 눈에 띄게 합니다 |
 
 ---
 
@@ -796,7 +812,7 @@ src/
       wordlist/words/            # 선택한 파일들의 단어 풀 파싱 (POST)
       wordlist/script/           # 지문 외우기용 줄 단위 파싱
       wordbook/                  # 단어장 추가 (GitHub 커밋, 비밀번호 검증)
-  components/                    # FileSelector, FlashCard(3D 플립), Mascot, SessionInfoPanel, UsageGuide, PageHeader, PageTransition 등
+  components/                    # FileSelector, FlashCard(3D 플립), Mascot, SessionInfoPanel, UsageGuide, PageHeader, PageTransition, Confetti, FeedbackFlash, StreakFlame 등
   contexts/                      # ThemeContext(다크모드), FocusModeContext(집중 모드)
   lib/                           # parser, queue(망각곡선), mastery(숙련도), learningLog(대시보드), streak(연속 학습일), favorites(즐겨찾기), matchScores(매칭 게임 기록), github(서버 전용), supabase
   hooks/useUserId.ts             # localStorage + URL 쿼리(?uid=) 기반 "내 번호"
